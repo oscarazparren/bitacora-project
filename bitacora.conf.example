@@ -1,0 +1,34 @@
+# Bitácora — configuración por dispositivo
+# Copiar a ~/.claude/bitacora.conf y ajustar. Todo es opcional salvo la etiqueta.
+
+# Identifica quién escribe cada entrada. Distinta en cada máquina.
+# "lo hizo el otro portátil" es información accionable por sí sola.
+BITACORA_ETIQUETA="portatil-1"
+
+# Fichero de bitácora en la raíz de cada repo.
+# (En la Fase 1 esto pasa a un directorio .bitacora/ con un fichero por entrada,
+#  para eliminar los conflictos de merge. Ver NOTAS-DE-CAMPO.md.)
+BITACORA_FICHERO="BITACORA.md"
+
+# Cuántas líneas del registro se inyectan al arrancar.
+# Es un truncado ciego, no recuperación por relevancia — pendiente, ver README.
+BITACORA_MAX_LINEAS=40
+
+# Carpetas donde el hook no crea nada y calla si no hay bitácora ya.
+# Repos de referencia, dependencias, herramientas de terceros.
+BITACORA_IGNORAR="*/repos/*|*/tools/*|*/node_modules/*|*/.claude/*"
+
+# ¿Crear BITACORA.md automáticamente en repos que no la tienen? si | no
+BITACORA_CREAR_SI_FALTA="si"
+
+# ---------- Bitácora de flota (opcional) ----------
+# Para infraestructura que cruza varios repos y servidores, y no cabe en ninguno.
+# Dejar BITACORA_FLOTA_SSH vacío para desactivarla.
+
+BITACORA_FLOTA_SSH=""                              # alias SSH del servidor de flota
+BITACORA_FLOTA_RUTA="/opt/bitacora/BITACORA.md"    # ruta del registro en ese servidor
+
+# Repos que se cubren con la bitácora de flota en vez de con la suya propia.
+# Patrones glob contra el nombre del repo, en minúsculas, separados por '|'.
+# Fuera de un repo se usa siempre la flota, si está configurada.
+BITACORA_FLOTA_REPOS=""

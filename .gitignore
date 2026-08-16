@@ -1,0 +1,23 @@
+# ---------------------------------------------------------------
+# Registros. Este repositorio es el PRODUCTO, no contiene registros.
+# Un registro real lleva el mapa operativo de tu infraestructura:
+# proveedor, despliegues, rutas, qué corre dónde. Nada de eso es una
+# credencial, y por eso es fácil publicarlo sin darse cuenta.
+# ---------------------------------------------------------------
+.bitacora/
+BITACORA.md
+BITACORA.md.bak
+ESTADO.md
+
+# Configuración local del dispositivo (etiqueta, alias SSH, rutas)
+bitacora.conf
+*.log
+
+# Documentos internos de proyecto, no parte del producto público
+bitacora-dossier*.md
+bitacora-dossier*.txt
+
+# Sistema
+.DS_Store
+Thumbs.db
+desktop.ini

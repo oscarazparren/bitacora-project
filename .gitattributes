@@ -1,0 +1,19 @@
+# Los scripts se ejecutan en Linux (servidor de flota) y en Git Bash.
+# Con CRLF, bash falla con "bad interpreter: /bin/bash^M".
+*.sh        text eol=lf
+*.conf      text eol=lf
+*.example   text eol=lf
+
+*.md        text
+*.json      text
+
+# Nunca tocar binarios: la conversión de fin de línea los corrompe.
+*.png       binary
+*.jpg       binary
+*.jpeg      binary
+*.webp      binary
+*.avif      binary
+*.gif       binary
+*.pdf       binary
+*.woff      binary
+*.woff2     binary
