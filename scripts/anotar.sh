@@ -8,8 +8,10 @@
 #
 # La entrada nueva se inserta arriba del todo (lo más reciente primero).
 #
-# Para la bitácora de un repo NO se usa esto: allí se añade un fichero a
-# .bitacora/ y se hace commit, que es lo que la lleva a los demás dispositivos.
+# Para la bitácora de un repo NO se usa esto: allí se añade la entrada al
+# BITACORA.md de ese repo y se hace commit, que es lo que la lleva a los demás
+# dispositivos. (Fase 1 mueve esto a un fichero por entrada en .bitacora/,
+# ver NOTAS-DE-CAMPO.md — no implementado todavía.)
 
 set -euo pipefail
 
@@ -26,6 +28,12 @@ if [ ! -f "$F" ]; then
   exit 1
 fi
 
+# Serializa escrituras concurrentes: dos sesiones SSH anotando a la vez leen
+# el mismo fichero y la segunda en escribir pisa la entrada de la primera.
+# El lock se libera solo al salir del script (se cierra el descriptor 9).
+exec 9>"$F.lock"
+flock -x 9
+
 CUERPO=$(mktemp)
 TMP=$(mktemp)
 trap 'rm -f "$CUERPO" "$TMP"' EXIT
@@ -38,7 +46,7 @@ fi
 
 # Rechazo de secretos ANTES de escribir, no en el commit: para cuando el
 # pre-commit mira, el fichero ya está en disco y la siguiente sesión ya lo lee.
-if grep -Eqi '(api[_-]?key|secret|password|passwd|token|authorization|bearer|private[_-]?key)[[:space:]]*[:=]|-----BEGIN [A-Z ]*PRIVATE KEY-----|gh[pousr]_[A-Za-z0-9]{20,}|sk-[A-Za-z0-9]{20,}|xox[baprs]-[A-Za-z0-9-]{10,}' "$CUERPO"; then
+if grep -Eqi '(api[_-]?key|secret|password|passwd|token|authorization|bearer|private[_-]?key)[[:space:]]*[:=]|-----BEGIN [A-Z ]*PRIVATE KEY-----|gh[pousr]_[A-Za-z0-9]{20,}|sk-[A-Za-z0-9]{20,}|xox[baprs]-[A-Za-z0-9-]{10,}|AKIA[0-9A-Z]{16}|eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}|[a-zA-Z][a-zA-Z0-9+.-]*://[^[:space:]/@]+:[^[:space:]/@]+@' "$CUERPO"; then
   echo "BLOQUEADO: la entrada parece contener una credencial. Reescríbela sin el secreto." >&2
   echo "Una bitácora es un fichero compartido y versionado: lo que entra, se queda." >&2
   exit 2

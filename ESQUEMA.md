@@ -1,5 +1,11 @@
 # Esquema del registro
 
+> **Esto es la especificación de Fase 1, no lo que está implementado hoy.** Hoy
+> cada bitácora es un `BITACORA.md` único con entradas en Markdown libre bajo
+> `## AAAA-MM-DD — [dispositivo] titular` — sin frontmatter, sin `estado`, sin
+> `.bitacora/`. El README tiene la tabla de qué está construido y qué no.
+> Este documento describe hacia dónde va el esquema, no cómo anotar hoy.
+
 El esquema es el producto. Los adaptadores (hooks, reglas de editor, servidores MCP)
 son deliberadamente finos y reemplazables; esto no.
 

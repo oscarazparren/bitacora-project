@@ -38,6 +38,14 @@ es_carpeta_ignorada() {
   return 1
 }
 
+# Neutraliza, dentro del contenido de una entrada, cualquier línea que coincida
+# con los delimitadores del sobre de datos. Sin esto, una entrada que contenga
+# "--- FIN DEL REGISTRO ---" cierra el bloque de datos antes de tiempo y lo que
+# venga después deja de estar marcado como datos.
+sanear_delimitadores() {
+  sed -E 's/^--- (INICIO|FIN) DEL REGISTRO ---[[:space:]]*$/[dentro de una entrada] -- \1 DEL REGISTRO --/'
+}
+
 # ¿Este repo se cubre con la bitácora de flota en vez de con la suya propia?
 usa_flota() {
   [ -z "$FLOTA_SSH" ] && return 1
@@ -87,15 +95,24 @@ PLANTILLA
 
     if [ -f "$F" ]; then
       # Aviso de registro obsoleto: leer una bitácora vieja creyéndola al día
-      # es peor que no leer ninguna, y el fallo es silencioso.
-      DETRAS=$(git -C "$RAIZ" rev-list --count HEAD..@{upstream} 2>/dev/null || echo 0)
-      if [ "${DETRAS:-0}" -gt 0 ] 2>/dev/null; then
-        SALIDA="${SALIDA}AVISO: este repo va $DETRAS commit(s) por detrás del remoto. La bitácora que sigue puede estar obsoleta; haz 'git pull' antes de fiarte de ella.
+      # es peor que no leer ninguna, y el fallo es silencioso. Hace falta un
+      # 'fetch' antes de comparar: sin él, HEAD..@{upstream} compara contra lo
+      # que el repo local ya sabía del remoto, no contra su estado real, y el
+      # aviso no salta aunque el remoto lleve commits nuevos.
+      if timeout 5 git -C "$RAIZ" fetch --quiet 2>/dev/null; then
+        DETRAS=$(git -C "$RAIZ" rev-list --count HEAD..@{upstream} 2>/dev/null || echo 0)
+        if [ "${DETRAS:-0}" -gt 0 ] 2>/dev/null; then
+          SALIDA="${SALIDA}AVISO: este repo va $DETRAS commit(s) por detrás del remoto. La bitácora que sigue puede estar obsoleta; haz 'git pull' antes de fiarte de ella.
+
+"
+        fi
+      else
+        SALIDA="${SALIDA}AVISO: no se pudo comprobar si este repo va por detrás del remoto (sin red o sin acceso al remoto). La bitácora que sigue podría estar obsoleta.
 
 "
       fi
 
-      ENTRADAS=$(sed -n '/^## /,$p' "$F" 2>/dev/null | head -n "$MAX_LINEAS")
+      ENTRADAS=$(sed -n '/^## /,$p' "$F" 2>/dev/null | head -n "$MAX_LINEAS" | sanear_delimitadores)
       if [ -n "$ENTRADAS" ]; then
         SALIDA="${SALIDA}=== BITACORA DEL REPO: $NOMBRE ===
 $ENTRADAS
@@ -119,7 +136,7 @@ fi
 # Infraestructura que cruza varios repos y servidores, y no cabe en ninguno.
 if usa_flota && [ -n "$FLOTA_RUTA" ]; then
   CENTRAL=$(ssh -o ConnectTimeout=8 -o BatchMode=yes "$FLOTA_SSH" \
-    "sed -n '/^## /,\$p' '$FLOTA_RUTA' | head -n $MAX_LINEAS" 2>/dev/null || true)
+    "sed -n '/^## /,\$p' '$FLOTA_RUTA' | head -n $MAX_LINEAS" 2>/dev/null | sanear_delimitadores || true)
   if [ -n "$CENTRAL" ]; then
     SALIDA="${SALIDA}=== BITACORA DE FLOTA (infraestructura: varios servidores y repos) ===
 $CENTRAL
