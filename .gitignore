@@ -1,13 +1,18 @@
 # ---------------------------------------------------------------
-# Registros. Este repositorio es el PRODUCTO, no contiene registros.
-# Un registro real lleva el mapa operativo de tu infraestructura:
-# proveedor, despliegues, rutas, qué corre dónde. Nada de eso es una
-# credencial, y por eso es fácil publicarlo sin darse cuenta.
+# Este repositorio SÍ tiene su propia bitácora, y está versionada.
+# Un producto que no se usa a sí mismo no es creíble.
+#
+# Lo que va en ella son decisiones DE PRODUCTO. Nunca infraestructura:
+# un registro operativo lleva proveedor, despliegues, rutas y qué corre
+# dónde, y nada de eso es una credencial — por eso es fácil publicarlo
+# sin darse cuenta. Eso va a un repositorio privado aparte.
 # ---------------------------------------------------------------
-.bitacora/
-BITACORA.md
-BITACORA.md.bak
+
+# Derivado: se regenera al leer. Versionarlo conflicta en cada push.
 ESTADO.md
+
+# Respaldo transitorio que deja anotar.sh al escribir
+BITACORA.md.bak
 
 # Configuración local del dispositivo (etiqueta, alias SSH, rutas)
 bitacora.conf
