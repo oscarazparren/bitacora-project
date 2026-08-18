@@ -11,6 +11,52 @@ Formato: `## AAAA-MM-DD — [dispositivo] titular`
 
 ---
 
+## 2026-08-18 — [PC viejo] El índice de cambios se vuelve producto: ya no es un fork
+
+Resolución explícita de Oscar a una pregunta directa: "¿qué te queda pendiente?".
+Había una divergencia real desde esta tarde — un índice de cambios probado y en uso
+en la infraestructura de quien lo hizo, pero nunca traído aquí, que es donde vive el
+diseño de este proyecto. Decisión, no mía: "si tú crees que es mejor, que vaya al
+bitácora project".
+
+**Qué es y qué contesta.** Al arrancar, antes de la bitácora de un repo, dice EN QUÉ
+repos vigilados se ha movido algo desde la última vez que esa máquina miró — sin que
+nadie lo escriba, derivado de `git ls-remote` contra un marcador local. Contesta
+*dónde mirar*; la bitácora del repo sigue contestando *por qué*. Ver
+[NOTAS-DE-CAMPO.md](NOTAS-DE-CAMPO.md).
+
+**Generalizado al traerlo, no copiado tal cual.** La versión de origen llamaba a
+`ssh lizar` y a rutas fijas a mano — específico de una infraestructura, justo lo que
+la cabecera de este hook prohíbe ("si necesitas tocarlo para adaptarlo a tu entorno,
+es un bug"). Aquí reutiliza `BITACORA_FLOTA_SSH` (ya existía) y añade
+`BITACORA_INDICE_REPOS` (ruta remota a la lista de repos), `BITACORA_INDICE_TECHO`,
+`BITACORA_VISTO` y `BITACORA_RUTAS`. Todo opcional: sin configurar, esta sección no
+hace nada — ni un aviso, silencio limpio.
+
+**De paso resuelve el pendiente de la nota anterior.** `entradas_recientes()` acepta
+ahora una fecha opcional: con el índice activo, la sección 1 corta por la fecha real
+de la última visita de esta máquina a ese repo, no por un número fijo. Sin índice,
+sigue el corte por `BITACORA_MAX_ENTRADAS` de antes — se degrada, no se rompe.
+
+**Probado contra infraestructura real**, no solo con ficheros de prueba: contra el
+servidor de quien lo trajo, dentro de un repo real, con marcador viejo de verdad y
+con marcador al día. Detectó correctamente commits nuevos, calculó cuántos, dijo si
+la bitácora del repo se había actualizado, y resolvió la ruta local del repo en el
+que se estaba ejecutando. Confirmada también la compatibilidad hacia atrás: sin
+`BITACORA_INDICE_REPOS` configurado, el comportamiento es idéntico al de antes de
+hoy.
+
+**Un hallazgo de prueba, no de producto:** con `$HOME` forzado a un directorio falso
+para aislar la prueba, el aviso de "repo detrás del remoto" (sección 1, ya existente)
+dio un falso "no se pudo comprobar". No es un bug — `git fetch` no encontraba
+configuración bajo el `$HOME` de mentira. Repetido con `$HOME` real: correcto.
+Anotado por si alguien más repite el mismo tipo de prueba y se confunde igual.
+
+**Lo que sigue sin resolver, y no se resuelve aquí:** el aviso del índice se consume
+al leerse, no cuando alguien lo lee de verdad — ver la nota de campo. Y la migración
+de quien usaba el fork suelto a esta versión configurable queda para otra entrada.
+
+
 ## 2026-08-18 — [PC viejo] Truncar en silencio, en los dos extremos del tubo
 
 Un día de uso real ha dado tres notas de campo. Las tres son la misma familia de fallo:

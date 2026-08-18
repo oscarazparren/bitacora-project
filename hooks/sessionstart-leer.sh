@@ -25,6 +25,10 @@ FLOTA_SSH="${BITACORA_FLOTA_SSH:-}"
 FLOTA_RUTA="${BITACORA_FLOTA_RUTA:-}"
 FLOTA_REPOS="${BITACORA_FLOTA_REPOS:-}"
 CREAR_SI_FALTA="${BITACORA_CREAR_SI_FALTA:-si}"
+INDICE_REPOS="${BITACORA_INDICE_REPOS:-}"    # ruta remota (vía FLOTA_SSH) a la lista de repos vigilados; vacío = desactivado
+INDICE_TECHO="${BITACORA_INDICE_TECHO:-6}"   # techo duro de entradas por repo aunque la fecha de referencia permita más
+VISTO="${BITACORA_VISTO:-$HOME/.claude/bitacora-visto}"
+RUTAS="${BITACORA_RUTAS:-$HOME/.claude/bitacora-rutas}"
 
 SALIDA=""
 
@@ -49,11 +53,14 @@ sanear_delimitadores() {
 
 # Corta por ENTRADAS completas, no por líneas: una entrada partida a la mitad es peor
 # que no tenerla (nota de campo, 2026-08-18: una bitácora de dos días ya se leía al
-# 22% con el corte por líneas, y se cortaba en silencio). Recibe el fichero y un
-# máximo de entradas; da las más recientes, en el orden del fichero (que ya es
-# newest-first). Deja en variables globales cuántas quedaron fuera y desde cuándo.
+# 22% con el corte por líneas, y se cortaba en silencio). $1 fichero, $2 techo duro
+# de entradas, $3 fecha AAAA-MM-DD opcional — si se da, solo entran entradas de esa
+# fecha en adelante (viene del índice: la última vez que esta máquina vio este repo).
+# Da las entradas en el orden del fichero (más reciente primero, que es como se
+# escriben). Deja el resultado en variables globales: bash no devuelve texto largo
+# limpio desde una función.
 entradas_recientes() {
-  local fichero="$1" max="$2" dir f fecha i=0 incluidas=0
+  local fichero="$1" techo="$2" desde="${3:-}" dir f fecha i=0 incluidas=0
   dir=$(mktemp -d 2>/dev/null) || { dir="/tmp/entradas.$$"; mkdir -p "$dir"; }
   awk -v d="$dir" '
     /^## / {
@@ -70,16 +77,32 @@ entradas_recientes() {
   for f in $(ls "$dir" 2>/dev/null | sort); do
     i=$((i + 1))
     fecha="${f#*_}"
-    if [ "$i" -gt "$max" ]; then
+    if [ "$i" -gt "$techo" ] || { [ -n "$desde" ] && [[ "$fecha" < "$desde" ]]; }; then
       FECHA_CORTE="$fecha"
       break
     fi
+    # $(cat ..) recorta el salto de linea final: sin anadirlo aparte, la ultima
+    # linea de una entrada se fusiona con la cabecera de la siguiente (bug real,
+    # encontrado al probar esta misma funcion el 2026-08-18).
     ENTRADAS_TEXTO="${ENTRADAS_TEXTO}$(cat "$dir/$f")
 "
     incluidas=$((incluidas + 1))
   done
   ENTRADAS_OMITIDAS=$((ENTRADAS_TOTAL - incluidas))
   rm -rf "$dir"
+}
+
+# Dónde está clonado un repo en ESTA máquina. Primero $RUTAS (nombre<TAB>ruta, para
+# cuando la carpeta local no se llama igual que el repo), luego dos sitios obvios.
+ruta_local() {
+  local nombre="$1" r
+  if [ -f "$RUTAS" ]; then
+    r=$(awk -v n="$nombre" '$1==n {sub($1"[ \t]+",""); print; exit}' "$RUTAS")
+    [ -n "$r" ] && [ -d "$r/.git" ] && { echo "$r"; return; }
+  fi
+  for r in "$HOME/$nombre" "$HOME/Desktop/$nombre"; do
+    [ -d "$r/.git" ] && { echo "$r"; return; }
+  done
 }
 
 # ¿Este repo se cubre con la bitácora de flota en vez de con la suya propia?
@@ -96,6 +119,127 @@ usa_flota() {
   done
   return 1
 }
+
+# ---------- 0. Índice de cambios ----------
+# Contesta una pregunta distinta de la de la sección 1: no POR QUÉ se hizo algo, sino
+# EN QUÉ repos vigilados se ha movido algo desde la última vez que ESTA máquina miró.
+# No lo escribe nadie: se deriva de 'git ls-remote', así que no puede mentir por
+# olvido ni si una sesión anterior murió de mala manera. Necesita FLOTA_SSH e
+# INDICE_REPOS configurados; si falta cualquiera, esta sección no hace nada (no es
+# un fallo, es la sección desactivada).
+VISTO_ANTES=""
+if [ -n "$FLOTA_SSH" ] && [ -n "$INDICE_REPOS" ]; then
+  LISTA=$(ssh -o ConnectTimeout=8 -o BatchMode=yes "$FLOTA_SSH" "cat '$INDICE_REPOS'" 2>/dev/null || true)
+
+  if [ -n "$LISTA" ]; then
+    # Snapshot del marcador ANTES de sobreescribirlo: la sección 1 lo necesita para
+    # saber la fecha de la última visita a SU repo, y para entonces ya estaría pisado.
+    VISTO_ANTES="$HOME/.claude/.bitacora-visto-antes-de-esta-sesion"
+    if [ -f "$VISTO" ]; then cp "$VISTO" "$VISTO_ANTES"; else rm -f "$VISTO_ANTES" 2>/dev/null; fi
+
+    TMP=$(mktemp -d 2>/dev/null || { mkdir -p "/tmp/indice.$$"; echo "/tmp/indice.$$"; })
+
+    # Preguntar a cada remoto en paralelo: solo la punta, sin clonar nada.
+    while read -r NOMBRE URL _; do
+      case "${NOMBRE:-#}" in ''|'#'*) continue ;; esac
+      [ -z "${URL:-}" ] && continue
+      (
+        SHA=$(GIT_TERMINAL_PROMPT=0 timeout 15 git ls-remote "$URL" HEAD 2>/dev/null | cut -f1)
+        printf '%s\n' "${SHA:-ERROR}" > "$TMP/$NOMBRE"
+      ) &
+    done <<< "$LISTA"
+    wait
+
+    PRIMERA=no
+    [ -f "$VISTO" ] || PRIMERA=si
+
+    CAMBIADOS=""
+    IGUALES=""
+    FALLIDOS=""
+    NUEVO_VISTO="$TMP/visto.nuevo"
+    : > "$NUEVO_VISTO"
+
+    while read -r NOMBRE URL _; do
+      case "${NOMBRE:-#}" in ''|'#'*) continue ;; esac
+      [ -z "${URL:-}" ] && continue
+      AHORA=$(cat "$TMP/$NOMBRE" 2>/dev/null || echo ERROR)
+      ANTES=$(awk -v n="$NOMBRE" '$1==n {print $2; exit}' "$VISTO" 2>/dev/null || true)
+
+      # Si no se pudo consultar, se calla el cambio pero NO el fallo: se avisa y se
+      # conserva el marcador viejo, para no dar por visto lo que no se vio.
+      if [ "$AHORA" = "ERROR" ] || [ -z "$AHORA" ]; then
+        FALLIDOS="$FALLIDOS $NOMBRE"
+        [ -n "${ANTES:-}" ] && printf '%s\t%s\n' "$NOMBRE" "$ANTES" >> "$NUEVO_VISTO"
+        continue
+      fi
+
+      printf '%s\t%s\n' "$NOMBRE" "$AHORA" >> "$NUEVO_VISTO"
+      [ "$PRIMERA" = "si" ] && continue
+
+      if [ "$AHORA" = "${ANTES:-}" ]; then
+        IGUALES="$IGUALES $NOMBRE"
+        continue
+      fi
+
+      DETALLE="ha cambiado"
+      P=$(ruta_local "$NOMBRE")
+      if [ -n "$P" ] && [ -n "${ANTES:-}" ]; then
+        timeout 20 git -C "$P" fetch -q --prune 2>/dev/null
+        N=$(git -C "$P" rev-list --count "$ANTES..$AHORA" 2>/dev/null || true)
+        if [ -n "$N" ] && [ "$N" != "0" ]; then
+          DETALLE="$N commit(s) nuevo(s)"
+          if git -C "$P" diff --name-only "$ANTES" "$AHORA" -- "$FICHERO" 2>/dev/null | grep -q .; then
+            DETALLE="$DETALLE, $FICHERO ACTUALIZADA"
+          fi
+        fi
+      fi
+      [ -n "$P" ] && DETALLE="$DETALLE  ->  $P" || DETALLE="$DETALLE  (sin clonar en esta máquina)"
+      CAMBIADOS="${CAMBIADOS}  ${NOMBRE}: ${DETALLE}
+"
+    done <<< "$LISTA"
+
+    FECHA_ANT=$(awk 'NR==1 {print $3, $4}' "$VISTO" 2>/dev/null || true)
+
+    if [ "$PRIMERA" = "si" ]; then
+      SALIDA="${SALIDA}=== ÍNDICE DE CAMBIOS: primera vez en esta máquina ===
+No había marcador previo, así que se ha anotado el estado actual de los repos. A partir
+de la próxima sesión, aquí saldrá qué se ha movido desde la última vez.
+
+"
+    elif [ -n "$CAMBIADOS" ]; then
+      SALIDA="${SALIDA}=== SE HA MOVIDO ALGO DESDE TU ÚLTIMA SESIÓN EN ESTA MÁQUINA${FECHA_ANT:+ ($FECHA_ANT)} ===
+$CAMBIADOS
+Esto dice DÓNDE, no POR QUÉ. Antes de tocar cualquiera de esos repos, entra y lee su
+$FICHERO: el detalle y lo que se descartó están ahí, no en los commits.
+"
+      [ -n "$IGUALES" ] && SALIDA="${SALIDA}Sin cambios:$IGUALES
+"
+      SALIDA="$SALIDA
+"
+    else
+      SALIDA="${SALIDA}=== ÍNDICE DE CAMBIOS${FECHA_ANT:+ (desde $FECHA_ANT)} ===
+Sin movimiento en ninguno de los repos vigilados.
+
+"
+    fi
+
+    if [ -n "$FALLIDOS" ]; then
+      SALIDA="${SALIDA}AVISO: no se pudo consultar$FALLIDOS (red o permisos). Su marcador se
+deja como estaba: puede haber cambios ahí que este índice NO está viendo.
+
+"
+    fi
+
+    # El marcador se actualiza AHORA, al leerlo, no al cerrar la sesión: así no
+    # depende de que la sesión termine bien. Un aviso que solo se guarda al cerrar
+    # se pierde si la sesión muere de mala manera.
+    if [ -s "$NUEVO_VISTO" ]; then
+      HOY=$(date '+%Y-%m-%d %H:%M')
+      awk -v f="$HOY" '{print $1"\t"$2"\t"f}' "$NUEVO_VISTO" > "$VISTO.tmp" && mv "$VISTO.tmp" "$VISTO"
+    fi
+    rm -rf "$TMP"
+  fi
+fi
 
 # ---------- 1. Bitácora del repo actual ----------
 RAIZ=$(git rev-parse --show-toplevel 2>/dev/null || true)
@@ -148,7 +292,32 @@ PLANTILLA
 "
       fi
 
-      entradas_recientes "$F" "$MAX_ENTRADAS"
+      # Fecha de la última vez que ESTA máquina vio ESTE repo, según el marcador del
+      # índice (sección 0), guardado ANTES de que esa sección lo sobreescriba. Si el
+      # nombre local no coincide con el de la lista vigilada, se busca por ruta.
+      FECHA_REPO_DIA=""
+      if [ -n "$VISTO_ANTES" ] && [ -f "$VISTO_ANTES" ] && [ -n "${LISTA:-}" ]; then
+        NOMBRE_CANON=""
+        if awk -v n="$NOMBRE" '$1==n{f=1} END{exit !f}' "$VISTO_ANTES"; then
+          NOMBRE_CANON="$NOMBRE"
+        else
+          while read -r N _ _; do
+            case "${N:-#}" in ''|'#'*) continue ;; esac
+            P=$(ruta_local "$N")
+            if [ -n "$P" ] && [ "$P" = "$RAIZ" ]; then NOMBRE_CANON="$N"; break; fi
+          done <<< "$LISTA"
+        fi
+        [ -n "$NOMBRE_CANON" ] && FECHA_REPO_DIA=$(awk -v n="$NOMBRE_CANON" '$1==n {print $3; exit}' "$VISTO_ANTES")
+      fi
+
+      # Con índice activo para este repo, el techo es INDICE_TECHO (más generoso,
+      # porque la fecha ya acota); sin él, se mantiene MAX_ENTRADAS de siempre, para
+      # no cambiar el comportamiento de quien no configura el índice.
+      if [ -n "$FECHA_REPO_DIA" ]; then
+        entradas_recientes "$F" "$INDICE_TECHO" "$FECHA_REPO_DIA"
+      else
+        entradas_recientes "$F" "$MAX_ENTRADAS" ""
+      fi
       ENTRADAS=$(printf '%s' "$ENTRADAS_TEXTO" | sanear_delimitadores)
       if [ -n "$ENTRADAS" ]; then
         SALIDA="${SALIDA}=== BITACORA DEL REPO: $NOMBRE ===

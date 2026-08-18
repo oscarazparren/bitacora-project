@@ -86,11 +86,16 @@ puede abrirlo si le hace falta. Lo inyectado es un **aviso**, no el archivo.
 **Implementado el 2026-08-18.** `entradas_recientes()` en `hooks/sessionstart-leer.sh`
 corta por entrada completa y avisa de lo omitido (`BITACORA_MAX_ENTRADAS`, antes
 `BITACORA_MAX_LINEAS` — que se conserva solo para la bitácora de flota, que sí puede
-ser corta sin coste). Lo que queda pendiente de verdad es la parte por FECHA: aquí
-solo hay un número fijo de entradas, no "desde la última visita de esta máquina",
-porque eso exige el marcador del índice de cambios, que este repo todavía no tiene
-(ver la entrada del `[PC viejo]` de esta fecha en BITACORA.md). Donde sí existe ese
-marcador —el hook de flota, fuera de este repo— el corte ya es por fecha real.
+ser corta sin coste).
+
+**La parte por FECHA, resuelta el mismo día, unas horas después.** El índice de
+cambios (ver más abajo, "Un aviso que se consume al leerlo no es un aviso") se llevó
+a este repo — antes vivía solo como fork en la máquina de quien lo probó. Con el
+índice activo (`BITACORA_INDICE_REPOS` configurado), la sección 1 ya no cuenta
+entradas: usa la fecha de la última vez que ESTA máquina vio ESTE repo, con
+`BITACORA_INDICE_TECHO` como límite de seguridad si ha pasado mucho tiempo. Sin
+índice configurado, sigue el corte por número (`BITACORA_MAX_ENTRADAS`) — el
+mecanismo se degrada solo, no se rompe.
 
 ---
 
@@ -189,4 +194,12 @@ Las dos opciones tienen coste, y conviene elegirlo a sabiendas:
 
 Un punto intermedio barato: **no consumir el marcador hasta que el índice diga algo**, y
 conservar el aviso anterior sin borrar mientras siga sin acusarse. Un aviso repetido
-molesta; uno perdido no molesta a nadie, que es justo el problema.
+molesta; uno perdido no molesta a nadie, que es justo el problema. **No implementado
+todavía** — sigue marcando al leer, sin ese punto intermedio.
+
+**Implementado el 2026-08-18, más tarde el mismo día.** El índice vivía solo como
+prueba en la máquina de quien lo probó; se generalizó y se trajo a este repo
+(`hooks/sessionstart-leer.sh`, sección 0), configurable vía `BITACORA_FLOTA_SSH` +
+`BITACORA_INDICE_REPOS`. Sigue con el compromiso de "marcar al leer" descrito arriba,
+sin resolver todavía. Y de paso resolvió el pendiente de la nota anterior (corte por
+fecha real, no solo por número) para quien lo configure.

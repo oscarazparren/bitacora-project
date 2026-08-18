@@ -39,3 +39,25 @@ BITACORA_FLOTA_RUTA="/opt/bitacora/BITACORA.md"    # ruta del registro en ese se
 # Patrones glob contra el nombre del repo, en minúsculas, separados por '|'.
 # Fuera de un repo se usa siempre la flota, si está configurada.
 BITACORA_FLOTA_REPOS=""
+
+# ---------- Índice de cambios (opcional) ----------
+# Al arrancar, ANTES de la bitácora del repo, dice EN QUÉ repos vigilados se ha
+# movido algo desde la última vez que ESTA máquina miró — sin que nadie lo escriba,
+# derivado de 'git ls-remote'. No puede mentir por olvido ni si una sesión anterior
+# murió de mala manera. Necesita BITACORA_FLOTA_SSH (arriba) configurado; vacío aquí
+# = desactivado. Ver NOTAS-DE-CAMPO.md.
+#
+# Ruta remota, en el servidor de BITACORA_FLOTA_SSH, a la lista de repos vigilados:
+# un "nombre url-https" por línea, líneas '#' se ignoran.
+BITACORA_INDICE_REPOS=""
+
+# Techo duro de entradas por repo que muestra la sección 1, aunque la fecha de la
+# última visita a ese repo (que da el índice) permita más. Cubre el caso de volver
+# tras mucho tiempo sin visitar un repo en concreto.
+BITACORA_INDICE_TECHO=6
+
+# Dónde guarda ESTA máquina lo último que vio de cada repo vigilado, y el mapa
+# opcional de repo -> carpeta local (nombre<TAB>ruta) para cuando el nombre de la
+# carpeta no coincide con el del repo. No suelen tocarse.
+BITACORA_VISTO="$HOME/.claude/bitacora-visto"
+BITACORA_RUTAS="$HOME/.claude/bitacora-rutas"
