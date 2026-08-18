@@ -292,6 +292,29 @@ PLANTILLA
 "
       fi
 
+      # Aviso en la dirección contraria: trabajo que existe SOLO en esta máquina.
+      # No hace falta red para verlo (compara contra lo último que ya se sabía del
+      # remoto), así que se calcula pase lo que pase con el fetch de arriba. Es el
+      # aviso que de verdad importa antes de cerrar la sesión por hoy: una nota de
+      # bitácora, por detallada que sea, describe el código — no lo sustituye. Si
+      # esto no llega a git, ningún otro dispositivo puede terminarlo, solo leer que
+      # existía.
+      SUCIO=$(git -C "$RAIZ" status --porcelain 2>/dev/null | wc -l | tr -d ' ')
+      DELANTE=$(git -C "$RAIZ" rev-list --count '@{upstream}'..HEAD 2>/dev/null || echo 0)
+      if [ "${SUCIO:-0}" -gt 0 ] || [ "${DELANTE:-0}" -gt 0 ] 2>/dev/null; then
+        AVISO_LOCAL=""
+        if [ "${DELANTE:-0}" -gt 0 ] 2>/dev/null; then
+          AVISO_LOCAL="$DELANTE commit(s) sin subir"
+        fi
+        if [ "${SUCIO:-0}" -gt 0 ]; then
+          [ -n "$AVISO_LOCAL" ] && AVISO_LOCAL="$AVISO_LOCAL, "
+          AVISO_LOCAL="${AVISO_LOCAL}$SUCIO cambio(s) sin guardar"
+        fi
+        SALIDA="${SALIDA}AVISO: este repo tiene $AVISO_LOCAL. NINGÚN otro dispositivo puede verlo todavía — no existe para ellos hasta que llegue a git. Si vas a cerrar la sesión ahora, sube primero (commit + push), o dilo explícitamente en la bitácora antes de terminar.
+
+"
+      fi
+
       # Fecha de la última vez que ESTA máquina vio ESTE repo, según el marcador del
       # índice (sección 0), guardado ANTES de que esa sección lo sobreescriba. Si el
       # nombre local no coincide con el de la lista vigilada, se busca por ruta.

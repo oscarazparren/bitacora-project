@@ -11,6 +11,25 @@ Formato: `## AAAA-MM-DD — [dispositivo] titular`
 
 ---
 
+## 2026-08-18 — [PC Nuevo] Nuevo aviso: trabajo que solo existe en esta máquina
+
+- **Pregunta de Oscar que lo motivó:** si se cierra sesión a medias, ¿puede el otro
+  dispositivo terminar la tarea leyendo solo la bitácora? Respuesta corta: depende de si
+  lo que falta está subido a git. Una nota, por detallada que sea, describe el código —
+  no lo sustituye. Sin red compartida entre dispositivos, lo que no llega a git no existe
+  para el otro.
+- **Añadido en `hooks/sessionstart-leer.sh`, sección 1**, justo al lado del aviso ya
+  existente de "repo por detrás del remoto" (misma idea, dirección contraria): si el repo
+  actual tiene cambios sin guardar (`git status --porcelain`) o commits sin subir
+  (`@{upstream}..HEAD`), lo dice explícitamente al arrancar sesión, sin esperar a que
+  nadie se acuerde de comprobarlo.
+- **No depende de que el fetch de arriba tenga éxito** (a diferencia del aviso de "por
+  detrás"): comparar contra lo último que ya se sabía del remoto no necesita red.
+- Probado con los 3 casos reales sobre `agentes-lizar` (repo limpio → silencio; un
+  fichero sin guardar → avisa; un commit sin subir → avisa), deshaciendo cada prueba
+  antes de la siguiente. El repo quedó exactamente en el mismo commit que antes de
+  empezar (`2759c80`).
+
 ## 2026-08-18 — [PC Nuevo] `BITACORA_IGNORAR` de ejemplo excluía repos activos, no solo referencia
 
 - **Bug de la plantilla, no del script.** El propio hook (línea 23) nunca excluyó
