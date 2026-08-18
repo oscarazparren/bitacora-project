@@ -10,8 +10,15 @@ BITACORA_ETIQUETA="portatil-1"
 #  para eliminar los conflictos de merge. Ver NOTAS-DE-CAMPO.md.)
 BITACORA_FICHERO="BITACORA.md"
 
-# Cuántas líneas del registro se inyectan al arrancar.
-# Es un truncado ciego, no recuperación por relevancia — pendiente, ver README.
+# Cuántas ENTRADAS completas (no líneas) del registro de un repo se inyectan al
+# arrancar. Las que no caben no se pierden: siguen en el fichero, y se avisa de
+# cuántas quedan y desde qué fecha. Sigue siendo un truncado ciego por antigüedad,
+# no recuperación por relevancia — eso sigue pendiente, ver README.
+BITACORA_MAX_ENTRADAS=5
+
+# Cuántas líneas de la bitácora de FLOTA (infraestructura, fuera de cualquier
+# repo) se inyectan. Esta sí puede ser corta sin coste: solo dice DÓNDE mirar,
+# no el porqué, así que no sufre igual el truncado por líneas.
 BITACORA_MAX_LINEAS=40
 
 # Carpetas donde el hook no crea nada y calla si no hay bitácora ya.

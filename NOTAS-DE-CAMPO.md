@@ -83,6 +83,15 @@ fecha de la última visita de esa máquina, hay un límite mejor que cualquier n
 detrás. Lo que no cabe no hace falta inyectarlo: el fichero está en el repo y el agente
 puede abrirlo si le hace falta. Lo inyectado es un **aviso**, no el archivo.
 
+**Implementado el 2026-08-18.** `entradas_recientes()` en `hooks/sessionstart-leer.sh`
+corta por entrada completa y avisa de lo omitido (`BITACORA_MAX_ENTRADAS`, antes
+`BITACORA_MAX_LINEAS` — que se conserva solo para la bitácora de flota, que sí puede
+ser corta sin coste). Lo que queda pendiente de verdad es la parte por FECHA: aquí
+solo hay un número fijo de entradas, no "desde la última visita de esta máquina",
+porque eso exige el marcador del índice de cambios, que este repo todavía no tiene
+(ver la entrada del `[PC viejo]` de esta fecha en BITACORA.md). Donde sí existe ese
+marcador —el hook de flota, fuera de este repo— el corte ya es por fecha real.
+
 ---
 
 ## Sin ciclo de vida, el registro se vuelve un campo de minas

@@ -19,6 +19,7 @@ CONF="${BITACORA_CONF:-$HOME/.claude/bitacora.conf}"
 ETIQUETA="${BITACORA_ETIQUETA:-sin-etiqueta}"
 FICHERO="${BITACORA_FICHERO:-BITACORA.md}"
 MAX_LINEAS="${BITACORA_MAX_LINEAS:-40}"
+MAX_ENTRADAS="${BITACORA_MAX_ENTRADAS:-5}"  # entradas completas, no lineas; ver NOTAS-DE-CAMPO.md
 IGNORAR="${BITACORA_IGNORAR:-*/node_modules/*|*/.claude/*}"
 FLOTA_SSH="${BITACORA_FLOTA_SSH:-}"
 FLOTA_RUTA="${BITACORA_FLOTA_RUTA:-}"
@@ -44,6 +45,41 @@ es_carpeta_ignorada() {
 # venga después deja de estar marcado como datos.
 sanear_delimitadores() {
   sed -E 's/^--- (INICIO|FIN) DEL REGISTRO ---[[:space:]]*$/[dentro de una entrada] -- \1 DEL REGISTRO --/'
+}
+
+# Corta por ENTRADAS completas, no por líneas: una entrada partida a la mitad es peor
+# que no tenerla (nota de campo, 2026-08-18: una bitácora de dos días ya se leía al
+# 22% con el corte por líneas, y se cortaba en silencio). Recibe el fichero y un
+# máximo de entradas; da las más recientes, en el orden del fichero (que ya es
+# newest-first). Deja en variables globales cuántas quedaron fuera y desde cuándo.
+entradas_recientes() {
+  local fichero="$1" max="$2" dir f fecha i=0 incluidas=0
+  dir=$(mktemp -d 2>/dev/null) || { dir="/tmp/entradas.$$"; mkdir -p "$dir"; }
+  awk -v d="$dir" '
+    /^## / {
+      if (n > 0) close(f)
+      n++
+      fecha = substr($0, 4, 10)
+      f = d "/" sprintf("%05d", n) "_" fecha
+    }
+    n > 0 { print > f }
+  ' "$fichero" 2>/dev/null
+  ENTRADAS_TOTAL=$(find "$dir" -type f 2>/dev/null | wc -l | tr -d ' ')
+  ENTRADAS_TEXTO=""
+  FECHA_CORTE=""
+  for f in $(ls "$dir" 2>/dev/null | sort); do
+    i=$((i + 1))
+    fecha="${f#*_}"
+    if [ "$i" -gt "$max" ]; then
+      FECHA_CORTE="$fecha"
+      break
+    fi
+    ENTRADAS_TEXTO="${ENTRADAS_TEXTO}$(cat "$dir/$f")
+"
+    incluidas=$((incluidas + 1))
+  done
+  ENTRADAS_OMITIDAS=$((ENTRADAS_TOTAL - incluidas))
+  rm -rf "$dir"
 }
 
 # ¿Este repo se cubre con la bitácora de flota en vez de con la suya propia?
@@ -112,12 +148,18 @@ PLANTILLA
 "
       fi
 
-      ENTRADAS=$(sed -n '/^## /,$p' "$F" 2>/dev/null | head -n "$MAX_LINEAS" | sanear_delimitadores)
+      entradas_recientes "$F" "$MAX_ENTRADAS"
+      ENTRADAS=$(printf '%s' "$ENTRADAS_TEXTO" | sanear_delimitadores)
       if [ -n "$ENTRADAS" ]; then
         SALIDA="${SALIDA}=== BITACORA DEL REPO: $NOMBRE ===
 $ENTRADAS
 
 "
+        if [ "$ENTRADAS_OMITIDAS" -gt 0 ]; then
+          SALIDA="${SALIDA}(quedan $ENTRADAS_OMITIDAS entrada(s) sin mostrar aquí, la más reciente del $FECHA_CORTE hacia atrás — completas en $F)
+
+"
+        fi
       else
         SALIDA="${SALIDA}=== BITACORA DEL REPO: $NOMBRE (vacía todavía) ===
 Sin entradas. Si en esta sesión cambias algo que otro dispositivo deba saber, añade una entrada bajo el '---' y haz commit.
