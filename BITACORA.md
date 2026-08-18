@@ -11,6 +11,48 @@ Formato: `## AAAA-MM-DD — [dispositivo] titular`
 
 ---
 
+## 2026-08-18 — [PC viejo] Truncar en silencio, en los dos extremos del tubo
+
+Un día de uso real ha dado tres notas de campo. Las tres son la misma familia de fallo:
+**cortar sin decirlo**. Ver [NOTAS-DE-CAMPO.md](NOTAS-DE-CAMPO.md).
+
+**Al leer.** La nota de `head -40` ya existía, pero hablaba de *relevancia*. Lo nuevo es
+la medida: una bitácora de **dos días** ya se leía al **22 %**, y una entrada larga
+expulsó del recorte a la del día anterior. Y lo que no estaba anotado: **no avisa**. Se
+decide aquí que el aviso de truncamiento («omitidas N entradas anteriores a…») no espera
+a la recuperación por relevancia — es tres líneas y convierte una pérdida silenciosa en
+un puntero. **Pendiente de implementar.**
+
+**Al escribir. Arreglado hoy, con prueba.** La ayuda del proyecto mandaba invocar
+`anotar.sh` con `printf`. Una entrada con un `%` dentro se guardó a medias y el script
+respondió «Anotado» y «Subido». Cambios en este repo:
+
+- `scripts/anotar.sh` — el cuerpo va por heredoc entrecomillado en la ayuda, y hay
+  rechazo de entradas que parecen truncadas **antes** de escribir (salida 3, no escribe
+  nada; escape con `PERMITIR_ENTRADA_RARA=si`). Al aceptar, informa de líneas y
+  caracteres guardados. Probado en Linux: rechaza el caso real y acepta el mismo texto
+  enviado por heredoc con el `%` intacto.
+- `hooks/sessionstart-leer.sh` — la ayuda que imprime ya no propone `printf`. Era la
+  fuente de la que se copiaba la invocación, así que era el origen real del fallo.
+
+**Fuente de verdad de `anotar.sh`:** sigue sin decidirse, y esta entrada no la decide. El
+arreglo se ha aplicado a las dos copias divergentes para no dejar el fallo vivo en
+ninguna; cuál manda es una decisión aparte y pendiente.
+
+**Lo que este producto todavía no tiene, y ya funciona fuera:** un índice de arranque que
+dice **en qué repos se ha movido algo desde la última sesión de esa máquina**, derivado
+de `git ls-remote` contra un marcador local — sin que nadie lo escriba, así que no puede
+mentir por olvido. Probado en una máquina real: anunció solo «7 commits nuevos,
+BITACORA.md actualizada» sin que nadie se lo contara. Contesta *dónde mirar*, que es una
+pregunta distinta de *por qué se hizo*, y hoy el esquema solo contempla la segunda. Su
+sitio es este repo.
+
+Su peaje también está medido: **~2.500 tokens fijos de entrada por sesión** entre el
+registro central y el del repo. Como argumento de «ahorro de tokens» no se sostiene, y
+conviene no venderlo así. Lo que sí se sostiene: trabajo que no se repite, y trampas que
+no se vuelven a pagar.
+
+
 ## 2026-08-16 — [PC viejo] Revisión del plan de Fase 1: no hace falta migrar los cinco repos a la vez
 
 Respuesta a la propuesta de arrancar Fase 1 completa. El plan es correcto en el fondo, pero una de sus premisas no lo es, y de ella salía la única parte cara: coordinar las dos máquinas a la vez y pedirle al humano que ejecutase comandos en la otra.

@@ -141,7 +141,11 @@ if usa_flota && [ -n "$FLOTA_RUTA" ]; then
     SALIDA="${SALIDA}=== BITACORA DE FLOTA (infraestructura: varios servidores y repos) ===
 $CENTRAL
 
-Para anotar aquí: printf -- \"- lo que hice\\n\" | ssh $FLOTA_SSH \"bash \$(dirname '$FLOTA_RUTA')/anotar.sh '[$ETIQUETA] titular'\"
+Para anotar aquí, con heredoc entrecomillado. NO uses printf: si el texto lleva un '%'
+corta la entrada por ahí y se guarda a medias.
+  ssh $FLOTA_SSH \"bash \$(dirname '$FLOTA_RUTA')/anotar.sh '[$ETIQUETA] titular'\" <<'EOF'
+  - lo que hice
+  EOF
 
 "
   fi

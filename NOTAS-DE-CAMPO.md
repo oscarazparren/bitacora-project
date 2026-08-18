@@ -62,6 +62,27 @@ atrás el problema que la bitácora dice resolver, y **empeora con cada entrada*
 La recuperación real está descrita en [ESQUEMA.md](ESQUEMA.md): decisiones vigentes,
 entradas cuyas rutas intersectan con la tarea, fallidos en esa zona, pendientes de otros.
 
+**Medido el 2026-08-18: ya no es hipotético.** Una bitácora con **dos días** de vida
+eran 12.687 caracteres, y el arranque inyectaba 2.829: **se leía el 22 %**. Una sola
+entrada larga escrita esa noche empujó fuera del recorte la entrada del día anterior —
+la que explicaba cómo se contabiliza el gasto y qué trampa tiene la facturación del
+proveedor. No se perdió del fichero: dejó de leerse, que para quien arranca es lo mismo.
+Dos días. La nota decía «empeora con cada entrada» y se quedaba corta: empeora rápido.
+
+**Pero el recorte no es el fallo. El fallo es que no avisa.** Corta y calla. Quien lee
+no sabe que hay más, así que no va a buscarlo — y actúa creyendo que tiene el cuadro
+completo, que es peor que saber que no lo tienes. Anunciarlo («omitidas N entradas
+anteriores a AAAA-MM-DD») cuesta tres líneas y convierte una pérdida silenciosa en un
+puntero. Es lo mínimo viable mientras no haya recuperación por relevancia, y no debería
+esperar a ella.
+
+**La unidad del recorte también está mal.** Cortar por LÍNEAS parte entradas por la
+mitad; la unidad natural del documento es la ENTRADA. Y en cuanto el arranque sabe la
+fecha de la última visita de esa máquina, hay un límite mejor que cualquier número fijo:
+**las entradas escritas desde entonces, enteras**, más una línea diciendo cuántas quedan
+detrás. Lo que no cabe no hace falta inyectarlo: el fichero está en el repo y el agente
+puede abrirlo si le hace falta. Lo inyectado es un **aviso**, no el archivo.
+
 ---
 
 ## Sin ciclo de vida, el registro se vuelve un campo de minas
@@ -105,3 +126,58 @@ Es la limitación de fondo y conviene tenerla presente al leer cualquier promesa
 «escritura automática». Se puede garantizar que algo se dispare; no se puede garantizar
 que lo que escriba valga. Todo el diseño de §7 existe para reducir esa brecha, no para
 fingir que no está.
+
+---
+
+## El registro se comió medio hallazgo y respondió que todo bien
+
+**Pasó el 2026-08-18.** La ayuda del propio proyecto decía de invocar `anotar.sh` así:
+
+    printf -- "- lo que hice\n" | ssh <servidor> "bash /ruta/anotar.sh '[disp] titular'"
+
+Una entrada contenía un `%` (era una medición: «se lee el 22 % del fichero»). `printf`
+lo tomó por especificador de formato, abortó ahí y mandó por la tubería solo el prefijo.
+El script guardó ese prefijo, lo commiteó, lo subió y respondió **«Anotado en la
+bitácora»** y **«Subido a GitHub. 28 entradas»**. Éxito reportado sobre un dato mutilado.
+
+Es el mismo fallo que el truncamiento de lectura, en el otro extremo del tubo: **cortar
+sin decirlo**. Y es peor al escribir, porque al leer al menos el fichero sigue entero;
+aquí lo que se pierde no existe en ningún sitio.
+
+Dos arreglos, los dos aplicados:
+
+1. **El cuerpo va por heredoc entrecomillado** (`<<'EOF'`), que no interpreta nada.
+   Corregido en la ayuda del script y en la que imprime el hook, que era de donde se
+   copiaba la invocación.
+2. **`anotar.sh` rechaza entradas que parecen truncadas, ANTES de escribir** (salida 3,
+   no escribe nada). Dos señales, las dos presentes en el incidente: el cuerpo no acaba
+   en salto de línea, y hay un número impar de `**`. Con escape por
+   `PERMITIR_ENTRADA_RARA=si`. Y al aceptar, informa de cuántas líneas y caracteres
+   guardó, para que el que llama pueda comparar.
+
+La lección general: **un mecanismo de registro no puede reportar éxito sin comprobar qué
+guardó.** El «OK» es la parte que la gente cree, y por eso es la que hay que ganarse.
+
+---
+
+## Un aviso que se consume al leerlo no es un aviso
+
+El índice de arranque compara el estado de los repos contra un marcador por máquina, y
+ese marcador **se actualiza al leer**, no al cerrar. Se hizo así a propósito: si
+dependiera del cierre, una sesión que muere de mala manera dejaría el marcador mintiendo.
+
+El precio se vio el mismo día. La sesión se reanudó por la tarde, el arranque disparó, el
+índice se calculó, **el marcador se actualizó — y nadie llegó a leer el aviso**. Quedó
+consumido. La segunda vez que se miró, ya no había nada que contar: había que reconstruir
+el estado anterior a mano para saber qué se había perdido.
+
+Las dos opciones tienen coste, y conviene elegirlo a sabiendas:
+
+- **Marcar al leer**: robusto ante sesiones que mueren; el aviso se lo lleva quien
+  arranque primero, lo lea o no.
+- **Marcar cuando el aviso se ha usado de verdad**: no se pierde, pero exige un acuse
+  que el hook no puede dar por sí solo, porque él ejecuta, no lee.
+
+Un punto intermedio barato: **no consumir el marcador hasta que el índice diga algo**, y
+conservar el aviso anterior sin borrar mientras siga sin acusarse. Un aviso repetido
+molesta; uno perdido no molesta a nadie, que es justo el problema.
