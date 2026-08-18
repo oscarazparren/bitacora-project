@@ -61,7 +61,10 @@ MOTIVO=""
 if [ -n "$(tail -c 1 "$CUERPO")" ]; then
   MOTIVO="no termina en salto de linea"
 fi
-MARCAS=$( { grep -o '\*\*' "$CUERPO" || true; } | wc -l )
+# Se ignora lo que va entre comillas invertidas: una entrada que HABLA de las marcas
+# (esta misma comprobacion, sin ir mas lejos) descuadraba la cuenta y se auto-bloqueaba.
+# Falso positivo encontrado usandolo, el mismo dia que se escribio.
+MARCAS=$( { sed 's/`[^`]*`//g' "$CUERPO" | grep -o '\*\*' || true; } | wc -l )
 if [ $((MARCAS % 2)) -ne 0 ]; then
   MOTIVO="${MOTIVO:+$MOTIVO; }$MARCAS marcas '**', impar: una negrita sin cerrar"
 fi
