@@ -22,8 +22,10 @@ BITACORA_MAX_ENTRADAS=5
 BITACORA_MAX_LINEAS=40
 
 # Carpetas donde el hook no crea nada y calla si no hay bitácora ya.
-# Repos de referencia, dependencias, herramientas de terceros.
-BITACORA_IGNORAR="*/repos/*|*/tools/*|*/node_modules/*|*/.claude/*"
+# OJO: no excluir "*/repos/*" a secas — si guardas ahí tus proyectos activos (no
+# solo material de referencia), eso apaga la bitácora en todos ellos sin avisar.
+# Excluye solo las subcarpetas que de verdad son de solo lectura o de terceros.
+BITACORA_IGNORAR="*/repos/referencia/*|*/repos/archivo/*|*/tools/*|*/node_modules/*|*/.claude/*"
 
 # ¿Crear BITACORA.md automáticamente en repos que no la tienen? si | no
 BITACORA_CREAR_SI_FALTA="si"

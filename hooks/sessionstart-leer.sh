@@ -100,7 +100,7 @@ ruta_local() {
     r=$(awk -v n="$nombre" '$1==n {sub($1"[ \t]+",""); print; exit}' "$RUTAS")
     [ -n "$r" ] && [ -d "$r/.git" ] && { echo "$r"; return; }
   fi
-  for r in "$HOME/$nombre" "$HOME/Desktop/$nombre"; do
+  for r in "$HOME/$nombre" "$HOME/repos/$nombre" "$HOME/Desktop/$nombre"; do
     [ -d "$r/.git" ] && { echo "$r"; return; }
   done
 }

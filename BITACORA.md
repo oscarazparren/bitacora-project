@@ -11,6 +11,26 @@ Formato: `## AAAA-MM-DD — [dispositivo] titular`
 
 ---
 
+## 2026-08-18 — [PC Nuevo] `BITACORA_IGNORAR` de ejemplo excluía repos activos, no solo referencia
+
+- **Bug de la plantilla, no del script.** El propio hook (línea 23) nunca excluyó
+  `*/repos/*` por defecto — el `BITACORA_IGNORAR` de `bitacora.conf.example` sí lo traía,
+  y es la línea que copia cada máquina a su `~/.claude/bitacora.conf`. Si alguien organiza
+  sus proyectos activos dentro de `repos/` (no solo material de solo lectura), esa línea
+  apaga la bitácora ahí sin avisar. Lo detecté porque `kangurea-web` vivía en
+  `repos/kangurea-web` y nunca mostraba su bitácora al arrancar sesión ahí.
+- **Corregido:** `BITACORA_IGNORAR="*/repos/referencia/*|*/repos/archivo/*|*/tools/*|..."`
+  — excluye solo las subcarpetas que de verdad son de solo lectura o archivadas, no
+  `repos/` entero.
+- **`ruta_local()` también corregida:** ahora prueba también `$HOME/repos/$nombre` como
+  ubicación por defecto (antes solo `$HOME/$nombre` y `$HOME/Desktop/$nombre`), para que
+  el índice de cambios encuentre el clon local sin necesitar `bitacora-rutas` a mano.
+- **⚠️ Esto NO se propaga solo.** `bitacora.conf.example` es una plantilla que cada
+  máquina copia a su propio `~/.claude/bitacora.conf` — si esa máquina ya tenía el
+  fichero copiado de antes, sigue con la línea vieja hasta que alguien la actualice a
+  mano. El PC viejo ya tiene su config propio (ver su entrada del 18 ago): su
+  `BITACORA_IGNORAR`, si lo copió de aquí, hay que revisarlo.
+
 ## 2026-08-18 — [PC viejo] El índice de cambios se vuelve producto: ya no es un fork
 
 Resolución explícita de Oscar a una pregunta directa: "¿qué te queda pendiente?".
