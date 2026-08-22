@@ -5,6 +5,62 @@ próxima persona no vuelva a pagarlo — que es exactamente lo que hace una bit�
 
 ---
 
+## Un monorepo apaga la bitácora de sus propias carpetas — y una cabecera sin fecha vacía la del repo entero
+
+Dos bugs reales, encontrados el 22-ago-2026 trabajando dentro de `agentes-lizar`
+(monorepo con 22+ agentes, cada uno con su propio slug bajo `agentes/`).
+
+**1. La sección 1 solo mira `git rev-parse --show-toplevel`.** En un repo de un solo
+proyecto eso es la raíz correcta. En un monorepo NO: si la convención del propio repo
+dice que cada agente lleva su `agentes/<slug>/BITACORA.md` de detalle (como decía la
+cabecera de `agentes-lizar/BITACORA.md` desde el 20-ago), esa bitácora se escribía con
+disciplina y **jamás se leía** — la sesión siempre arrancaba con la del repo entero,
+nunca con la de la carpeta donde de verdad se estaba trabajando. Arreglado: nueva
+sección 1b, sube desde `$PWD` hasta `$RAIZ` buscando la BITACORA.md más cercana.
+
+**2. Al probarlo en Windows/Git Bash salió un tercer bug, de comparación de rutas:**
+`git rev-parse --show-toplevel` devuelve `C:/Users/...`, pero `$PWD` (y `dirname` a
+partir de ahí) da `/c/Users/...`. Comparar esas dos cadenas con `!=` nunca es igual
+aunque sea la MISMA carpeta — el bucle de la sección 1b se pasaba de la raíz sin
+darse cuenta y duplicaba la bitácora del repo como si fuera "de una carpeta". Arreglado
+con `-ef` (compara dispositivo+inodo, no texto) para el corte del bucle, y
+`RAIZ=$(cd "$RAIZ" && pwd)` justo al calcularla, para que el resto de comparaciones de
+texto contra `$RAIZ` en todo el script (básicamente todas) dejen de depender del estilo
+de ruta que use `git` en esa plataforma.
+
+**3. El de verdad grave, y no tiene nada que ver con monorepos:** probando lo de
+arriba salió que **la bitácora RAÍZ de `agentes-lizar` llevaba desde el 20-ago
+leyéndose como "vacía todavía"**, en TODAS las sesiones, silenciosamente. Motivo: el
+`awk` de `entradas_recientes()` corta por `/^## /` a secas -- cualquier cabecera que
+empiece por `## ` cuenta como el principio de una entrada, no solo las fechadas. El
+20-ago se añadió una nota permanente (`## Dónde va cada cosa (desde 2026-08-20)`)
+ANTES del separador `---`, y esa cabecera se colaba como si fuera "la entrada más
+reciente": consumía el hueco (con `INDICE_TECHO=2` en esa máquina, se comía la MITAD
+del presupuesto) con una "fecha" que en realidad era el texto `Dónde va c` (el
+`substr($0,4,10)` de esa línea) -- y como esa cadena tiene espacios, el nombre del
+fichero temporal también, lo que rompe el `for f in $(ls "$dir")` sin comillas de más
+abajo (word-splitting: un fichero se convierte en tres "palabras" que no existen).
+Entre el hueco desperdiciado y el bucle roto, el resultado neto era cero entradas
+reales leídas. **Arreglado anclando el patrón a fecha:** `/^## [0-9]{4}-[0-9]{2}-[0-9]{2}/`.
+Cualquier cabecera de sección que no sea una entrada fechada, antes o después del
+`---`, ahora se ignora en vez de romper el conteo.
+
+**Lección que vale para los tres:** un fallo que se cala en silencio (bitácora "vacía"
+en vez de un error visible) es el peor de los tres modos de fallo de esta herramienta,
+y ya van dos veces en el mismo proyecto (la primera fue el truncado por líneas, ver
+más abajo). Cualquier cambio a `entradas_recientes()` o a lo que la rodea debería
+probarse contra un fichero real, no solo contra el caso feliz inventado para la prueba.
+
+**Y un techo nuevo, con la misma lección de los techos de arriba:** la sección 1b
+necesitó DOS límites, no uno -- `BITACORA_CARPETA_TECHO` (entradas) Y
+`BITACORA_CARPETA_MAX_CHARS` (caracteres), porque 3 entradas de
+`agentes/informes/BITACORA.md` sumaron 16.413 caracteres, más del doble del límite de
+10.000 de todo el hook junto. Un número fijo de entradas no basta cuando las entradas
+no pesan igual entre carpetas -- exactamente lo que ya decía la nota de más abajo
+sobre `INDICE_TECHO`, ahora repetido en un sitio nuevo.
+
+---
+
 ## El hook `Stop` no sirve para avisar al terminar
 
 **Probado y retirado el mismo día.** `Stop` no se dispara al terminar la sesión: se

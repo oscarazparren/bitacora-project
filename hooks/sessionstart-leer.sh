@@ -27,6 +27,8 @@ FLOTA_REPOS="${BITACORA_FLOTA_REPOS:-}"
 CREAR_SI_FALTA="${BITACORA_CREAR_SI_FALTA:-si}"
 INDICE_REPOS="${BITACORA_INDICE_REPOS:-}"    # ruta remota (vía FLOTA_SSH) a la lista de repos vigilados; vacío = desactivado
 INDICE_TECHO="${BITACORA_INDICE_TECHO:-6}"   # techo duro de entradas por repo aunque la fecha de referencia permita más
+CARPETA_TECHO="${BITACORA_CARPETA_TECHO:-3}" # techo de ENTRADAS de la bitácora de la CARPETA activa (monorepo), no la del repo
+CARPETA_MAX_CHARS="${BITACORA_CARPETA_MAX_CHARS:-2500}" # techo de CARACTERES para esa misma sección; las entradas no pesan igual, así que el número de entradas solo no basta (ver sección 1b)
 VISTO="${BITACORA_VISTO:-$HOME/.claude/bitacora-visto}"
 RUTAS="${BITACORA_RUTAS:-$HOME/.claude/bitacora-rutas}"
 
@@ -62,8 +64,16 @@ sanear_delimitadores() {
 entradas_recientes() {
   local fichero="$1" techo="$2" desde="${3:-}" dir f fecha i=0 incluidas=0
   dir=$(mktemp -d 2>/dev/null) || { dir="/tmp/entradas.$$"; mkdir -p "$dir"; }
+  # Solo cuenta como entrada un '## ' seguido de una fecha AAAA-MM-DD. Sin este
+  # anclaje, cualquier cabecera de sección que no sea una entrada (p.ej. "##
+  # Dónde va cada cosa", una nota permanente antes del '---') se colaba como si
+  # fuera la entrada más reciente: consumía un hueco del techo con basura, y su
+  # "fecha" (texto libre, con espacios) rompía el nombre del fichero temporal
+  # -- de ahí que la bitácora entera pudiera leerse "vacía" en silencio (bug
+  # real, encontrado el 22-ago-2026 con la cabecera añadida el 20-ago en
+  # agentes-lizar/BITACORA.md).
   awk -v d="$dir" '
-    /^## / {
+    /^## [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]/ {
       if (n > 0) close(f)
       n++
       fecha = substr($0, 4, 10)
@@ -243,6 +253,11 @@ fi
 
 # ---------- 1. Bitácora del repo actual ----------
 RAIZ=$(git rev-parse --show-toplevel 2>/dev/null || true)
+# Normaliza al estilo del propio shell (MSYS "/c/..." en Git Bash de Windows,
+# donde 'git rev-parse' da "C:/..."). Sin esto, cualquier comparación o recorte
+# de string contra $RAIZ más abajo falla en silencio en Windows aunque sea la
+# misma carpeta -- ver la sección 1b, que es donde se encontró el bug.
+[ -n "$RAIZ" ] && RAIZ=$(cd "$RAIZ" 2>/dev/null && pwd || printf '%s' "$RAIZ")
 
 if [ -n "$RAIZ" ]; then
   NOMBRE=$(basename "$RAIZ")
@@ -360,6 +375,75 @@ Sin entradas. Si en esta sesión cambias algo que otro dispositivo deba saber, a
       fi
 
       SALIDA="${SALIDA}Para anotar aquí: añade una entrada '## \$(date +%F) — [$ETIQUETA] titular' justo debajo del '---' de $F, y haz commit.
+
+"
+    fi
+  fi
+fi
+
+# ---------- 1b. Bitácora de la CARPETA activa (monorepo) ----------
+# La sección 1 mira siempre la raíz del repo GIT ($RAIZ), nunca dónde se abrió la
+# sesión de verdad. En un monorepo (varios agentes/proyectos dentro de un solo repo,
+# cada uno con su propia BITACORA.md de detalle, por convención ya escrita en la
+# cabecera de la bitácora raíz) eso significa que la bitácora de la carpeta NUNCA se
+# lee, aunque exista y se escriba en ella con disciplina — bug real, encontrado el
+# 22-ago-2026 trabajando dentro de agentes/clon/ de agentes-lizar.
+#
+# Sube desde $PWD hacia $RAIZ (sin incluirla: eso ya lo cubre la sección 1) y se
+# queda con la primera BITACORA.md que encuentre. Esto se SUMA a lo de la
+# sección 1, no lo sustituye -- por eso lleva DOS techos, no uno: CARPETA_TECHO
+# (entradas) Y CARPETA_MAX_CHARS (caracteres). Solo el número de entradas no
+# basta -- probado en vivo el 22-ago-2026: 3 entradas de agentes/informes
+# sumaron 16.413 caracteres, más del doble del límite de 10.000 de Claude Code
+# para todo el hook junto (índice + sección 1 + esto). Si no caben, se van
+# soltando las MÁS VIEJAS de las elegidas hasta que quepa -- entradas enteras,
+# nunca a medias, igual que ya hace entradas_recientes() con el corte por fecha.
+#
+# A propósito NO se crea si falta (a diferencia de la raíz): auto-crear un
+# BITACORA.md en cualquier subcarpeta que alguien toque llenaría el repo de
+# ficheros sin que nadie lo decidiera. Aquí solo se lee si ya existe.
+if [ -n "$RAIZ" ] && [ -n "$MOSTRAR" ]; then
+  DIR_CARPETA="$PWD"
+  F_CARPETA=""
+  # OJO: comparar por STRING ("$DIR_CARPETA" != "$RAIZ") no vale en Windows/Git
+  # Bash -- 'git rev-parse --show-toplevel' devuelve estilo "C:/Users/..." pero
+  # $PWD (y dirname de ahí) da estilo MSYS "/c/Users/...". Son la MISMA carpeta
+  # y el texto nunca coincide: el bucle se pasaba de la raíz sin darse cuenta y
+  # duplicaba la bitácora del repo como si fuera "de una carpeta" (bug real,
+  # encontrado al probar esto mismo el 22-ago-2026). '-ef' compara por archivo
+  # real (mismo dispositivo+inodo), no por texto.
+  while ! [ "$DIR_CARPETA" -ef "$RAIZ" ] && [ "$DIR_CARPETA" != "/" ] && [ -n "$DIR_CARPETA" ]; do
+    if [ -f "$DIR_CARPETA/$FICHERO" ]; then
+      F_CARPETA="$DIR_CARPETA/$FICHERO"
+      break
+    fi
+    DIR_CARPETA=$(dirname "$DIR_CARPETA")
+  done
+
+  if [ -n "$F_CARPETA" ]; then
+    T="$CARPETA_TECHO"
+    while :; do
+      entradas_recientes "$F_CARPETA" "$T" ""
+      ENTRADAS_CARPETA=$(printf '%s' "$ENTRADAS_TEXTO" | sanear_delimitadores)
+      # Con T=1 ya no se puede soltar nada más: si ni la sola entrada más
+      # reciente cabe, se enseña igual entera -- una entrada de más pesa menos
+      # que enseñar cero, y cortarla a medias sería peor que las dos cosas.
+      [ "${#ENTRADAS_CARPETA}" -le "$CARPETA_MAX_CHARS" ] && break
+      [ "$T" -le 1 ] && break
+      T=$((T - 1))
+    done
+    RUTA_REL="${DIR_CARPETA#"$RAIZ"/}"
+    if [ -n "$ENTRADAS_CARPETA" ]; then
+      SALIDA="${SALIDA}=== BITACORA DE LA CARPETA: $RUTA_REL ===
+$ENTRADAS_CARPETA
+
+"
+      if [ "$ENTRADAS_OMITIDAS" -gt 0 ]; then
+        SALIDA="${SALIDA}(quedan $ENTRADAS_OMITIDAS entrada(s) sin mostrar aquí -- completas en $F_CARPETA)
+
+"
+      fi
+      SALIDA="${SALIDA}Para anotar aquí: añade una entrada '## \$(date +%F) — [$ETIQUETA] titular' justo debajo del '---' de $F_CARPETA, y haz commit.
 
 "
     fi

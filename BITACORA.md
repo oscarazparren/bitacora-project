@@ -11,6 +11,42 @@ Formato: `## AAAA-MM-DD — [dispositivo] titular`
 
 ---
 
+## 2026-08-22 — [PC Nuevo] La sección 1 lee la bitácora de la CARPETA activa en un monorepo — y de paso, un bug grave: una bitácora podía leerse "vacía" en silencio
+
+Óscar lo pidió directo: en un monorepo (`agentes-lizar`, 22+ agentes bajo `agentes/`),
+la bitácora de detalle de cada agente (`agentes/<slug>/BITACORA.md`) existía, se
+escribía con disciplina, y el hook **jamás la leía** — solo miraba la raíz del repo
+git. Detalle técnico completo (los tres bugs, uno de ellos grave y previo a esta
+sesión) en **[NOTAS-DE-CAMPO.md](NOTAS-DE-CAMPO.md)**. En corto:
+
+- **Nueva sección 1b** en `hooks/sessionstart-leer.sh`: sube desde `$PWD` hasta la
+  raíz del repo buscando la BITACORA.md más cercana, y la añade a lo que ya se
+  inyectaba. No crea nada si no existe — a diferencia de la raíz, que sí se
+  autocrea. Con dos techos (entradas Y caracteres, `BITACORA_CARPETA_TECHO` /
+  `BITACORA_CARPETA_MAX_CHARS`): probado en vivo que 3 entradas de una carpeta real
+  sumaban 16.413 caracteres, más del doble del límite de todo el hook.
+- **Bug de plataforma, encontrado al probar lo de arriba en Windows/Git Bash:**
+  comparar rutas con `!=` fallaba en silencio (`git rev-parse` da `C:/...`, `$PWD` da
+  `/c/...`). Arreglado con `-ef` y normalizando `$RAIZ` una vez, al calcularla.
+- **El hallazgo más importante no era el que se estaba buscando:** la bitácora RAÍZ
+  de `agentes-lizar` llevaba desde el 20-ago leyéndose como "vacía todavía" en TODAS
+  las sesiones — una cabecera de sección sin fecha (`## Dónde va cada cosa`) antes
+  del `---` rompía el `awk` de `entradas_recientes()`. Arreglado anclando el patrón a
+  `## AAAA-MM-DD`. Este bug es independiente del punto 1: afecta a cualquier repo,
+  tenga o no monorepo, con o sin la sección 1b.
+
+**Probado contra ficheros reales**, no con casos inventados (la propia nota de campo
+insiste en esto): `agentes-lizar` desde su raíz, desde `agentes/clon` (sin bitácora
+propia — no añade nada, no duplica), y desde `agentes/informes` (con bitácora propia
+— se recorta a 1 entrada para caber, avisando de las 10 que quedan fuera). Los tres
+casos, sin errores en stderr, bajo los 10.000 caracteres.
+
+**Sin resolver, y no es lo mismo que esto:** sigue sin existir la "recuperación por
+relevancia" real (qué archivos tocó la tarea, no solo qué carpeta). Este cambio
+resuelve el caso monorepo y dos bugs de fiabilidad — no sustituye esa pieza, que
+sigue en el README como pendiente.
+
+
 ## 2026-08-18 — [PC Nuevo] Nuevo aviso: trabajo que solo existe en esta máquina
 
 - **Pregunta de Oscar que lo motivó:** si se cierra sesión a medias, ¿puede el otro

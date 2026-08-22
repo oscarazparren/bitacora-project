@@ -63,3 +63,21 @@ BITACORA_INDICE_TECHO=6
 # carpeta no coincide con el del repo. No suelen tocarse.
 BITACORA_VISTO="$HOME/.claude/bitacora-visto"
 BITACORA_RUTAS="$HOME/.claude/bitacora-rutas"
+
+# ---------- Bitácora de la CARPETA activa, en un monorepo ----------
+# La sección 1 solo mira la raíz del repo GIT. Si trabajas en un monorepo con
+# varios agentes/proyectos dentro (cada uno con su propia BITACORA.md de
+# detalle, p.ej. agentes/clon/BITACORA.md), esto añade esa bitácora también,
+# subiendo desde la carpeta donde se abrió la sesión hasta encontrar la primera
+# BITACORA.md por el camino. Si no hay ninguna carpeta así (repo de un solo
+# proyecto), esta sección no añade nada.
+#
+# Dos techos, no uno: las entradas no pesan igual entre carpetas (una bitácora
+# de detalle puede tener entradas mucho más largas que la del repo), así que
+# limitar solo por NÚMERO de entradas no basta -- medido en vivo el 22-ago-2026:
+# 3 entradas de una carpeta sumaron 16.413 caracteres, más del doble del límite
+# de 10.000 de todo el hook junto. Se recorta por AMBOS, entradas enteras nunca
+# a medias: si ni la más reciente sola cabe en el límite de caracteres, se
+# enseña igual (una de más pesa menos que enseñar cero).
+BITACORA_CARPETA_TECHO=3        # techo de entradas, antes de mirar el tamaño
+BITACORA_CARPETA_MAX_CHARS=2500 # techo de caracteres de esta sección
