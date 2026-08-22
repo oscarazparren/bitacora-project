@@ -46,6 +46,28 @@ relevancia" real (qué archivos tocó la tarea, no solo qué carpeta). Este camb
 resuelve el caso monorepo y dos bugs de fiabilidad — no sustituye esa pieza, que
 sigue en el README como pendiente.
 
+## 2026-08-18 — [PC viejo] Primer arranque real en esta máquina con las tres piezas de hoy
+
+- **Sesión de verificación, sin cambios de producto.** No se tocó una línea de código: el
+  repo quedó en `5d25cbb`, árbol limpio y sin commits por subir. Se anota igualmente
+  porque el arranque es la única parte de esto que no tiene test — solo se comprueba
+  usándola, y hoy era la primera vez en esta máquina con lo de hoy dentro.
+- **Las tres piezas se estrenaron juntas y se comportaron:**
+  - *Índice de cambios* — activo aquí, marcador al día (20:06), respuesta «sin movimiento
+    en ninguno de los repos vigilados». Queda verificado el camino silencioso; el camino
+    con commits nuevos no se ejercitó hoy en esta máquina.
+  - *Aviso de truncamiento* — salió la línea «quedan 6 entrada(s) sin mostrar aquí, la más
+    reciente del 2026-08-16 hacia atrás». La pérdida silenciosa que motivó
+    `BITACORA_MAX_ENTRADAS` es ya un puntero, que era exactamente lo que se pedía.
+  - *Aviso de trabajo sin subir* — calló, y callar era lo correcto: `git status
+    --porcelain` vacío y `@{upstream}..HEAD` a 0, comprobado contra el estado real y no
+    supuesto por no ver el mensaje.
+- **El salto entre dispositivos tiene ya evidencia de los dos lados.** Esta máquina leyó al
+  arrancar las entradas que el PC nuevo escribió hoy, sin que nadie las pasara a mano. Era
+  la premisa del proyecto; hoy está vista funcionando en las dos direcciones.
+- **Nada nuevo sobre los pendientes:** el aviso del índice se sigue consumiendo al leerse
+  en vez de al leerlo alguien de verdad, y la fuente de verdad de `anotar.sh` sigue sin
+  decidirse. Esta sesión no toca ninguno de los dos.
 
 ## 2026-08-18 — [PC Nuevo] Nuevo aviso: trabajo que solo existe en esta máquina
 
