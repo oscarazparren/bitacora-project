@@ -11,6 +11,39 @@ Formato: `## AAAA-MM-DD — [dispositivo] titular`
 
 ---
 
+## 2026-08-25 — [PC Nuevo] Revisión a fondo de una espec externa del propio sistema — 3 errores críticos, el más grave sobre Git
+
+Óscar tenía en el Escritorio (`SISTEMA BITÁCORA/# ESPECIFICACIÓN TÉCNICA SISTEMA
+BI.txt`, fuera de cualquier repo) una especificación completa del Sistema Bitácora
+Jerárquico, escrita sin conocimiento de este repo — ni de `ESQUEMA.md` ni, sobre todo,
+de `NOTAS-DE-CAMPO.md`. Pidió análisis a fondo y, después, una versión corregida
+descargable. Contrastada línea a línea contra lo que este repo ya había aprendido a
+base de fallos reales:
+
+- **Crítico y factual:** la espec decía que un `git stash` hecho al cerrar sesión en
+  un PC "se ve" en el otro tras `git pull`. Falso — los stashes son locales, nunca
+  viajan por push/pull, y la Fase 3 entera de esa espec se apoyaba en esto. Sustituido
+  por rama WIP empujada al remoto (`git push origin HEAD:wip/<maquina>-<tarea>`).
+- **Crítico:** proponía un `INDEX.md` compartido y commiteado por sesión — exactamente
+  el conflicto de merge de fichero único que este repo ya resolvió (`ESQUEMA.md`:
+  "el estado consolidado se regenera, no se versiona"). Corregido: INDEX derivado,
+  regenerado por el hook, en `.gitignore`.
+- **Crítico:** proponía un wrapper que redacta la entrada de cierre invocando al LLM
+  *después* de que el agente termine — el mismo diseño que este repo ya probó y
+  descartó por escrito en NOTAS-DE-CAMPO ("Escribir al cerrar sesión es el peor
+  momento posible"). Corregido: `PreCompact` + captura en caliente + `SessionEnd` que
+  solo consolida.
+- Huecos que la espec no mencionaba y este repo sí necesita: migración de los
+  `BITACORA.md` monolíticos existentes, archivado, modo fuera del árbol para repos de
+  cliente, concurrencia local (no solo por SSH), criterios de aceptación verificables
+  por test en vez de aspiracionales, y el linter de decisiones movido a Fase 4 en vez
+  de quedar como futurible — es la única pieza que da valor sin que nadie lea nada.
+
+Versión corregida completa, con cada corrección citando la nota de campo que la
+motiva: **[especificacion-tecnica-corregida-20260825.md](especificacion-tecnica-corregida-20260825.md)**.
+Entregada a Óscar como descarga en la misma sesión; se commitea aquí para que quede
+donde el próximo PC pueda encontrarla, no solo en su Descargas.
+
 ## 2026-08-22 — [PC Nuevo] La sección 1 lee la bitácora de la CARPETA activa en un monorepo — y de paso, un bug grave: una bitácora podía leerse "vacía" en silencio
 
 Óscar lo pidió directo: en un monorepo (`agentes-lizar`, 22+ agentes bajo `agentes/`),
