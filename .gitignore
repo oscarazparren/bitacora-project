@@ -14,6 +14,11 @@ ESTADO.md
 # Respaldo transitorio que deja anotar.sh al escribir
 BITACORA.md.bak
 
+# Lock de escrituras concurrentes de anotar.sh. Sin esta línea el fichero queda
+# sin rastrear para siempre y dispara el aviso de "repo con cambios sin guardar"
+# en cada arranque — una falsa alarma del propio producto contra sí mismo.
+BITACORA.md.lock
+
 # Configuración local del dispositivo (etiqueta, alias SSH, rutas)
 bitacora.conf
 *.log

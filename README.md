@@ -70,6 +70,7 @@ terminado.** Lo que hay funciona; lo que falta está identificado y documentado.
 | Aviso de registro obsoleto respecto al remoto | ✅ Funciona |
 | Registro entregado como datos delimitados, no como instrucciones | ✅ Funciona |
 | Rechazo de credenciales antes de escribir | ✅ En `anotar.sh` |
+| Commit y subida automáticos al anotar | ✅ En `anotar.sh` desde el 2026-08-25 — antes escribía en local y decía «anotado» |
 | Esquema con ciclo de vida de decisiones | 📄 Especificado, sin validador todavía |
 | **Escritura automática (`PreCompact`, `SessionEnd`)** | ❌ **No implementado** — hoy anotar depende de que el agente se acuerde |
 | Un fichero por entrada (`.bitacora/`) | ❌ Hoy es un `BITACORA.md` único: conflicto de merge si dos máquinas anotan el mismo día |
@@ -122,11 +123,19 @@ ver [NOTAS-DE-CAMPO.md](NOTAS-DE-CAMPO.md).
 **Dentro de un repo:** añade la entrada al `BITACORA.md` de ese repo y **haz commit** —
 el commit es lo que la lleva a los demás dispositivos.
 
-**Infraestructura (flota):**
+**Infraestructura (flota):** el cuerpo va por **heredoc entrecomillado**, que no
+interpreta nada. Nunca por `printf`: un `%` en el texto lo corta ahí mismo y la entrada
+se guarda a medias — pasó, y el script ahora lo rechaza en vez de tragárselo.
 
 ```bash
-printf -- "- Qué hice, con rutas y puertos concretos.\n" | ssh <servidor> "bash /ruta/anotar.sh '[etiqueta] titular corto'"
+ssh <servidor> "bash /ruta/anotar.sh '[etiqueta] titular corto'" <<'EOF'
+- Qué hice, con rutas y puertos concretos.
+EOF
 ```
+
+Si el fichero vive en una copia de trabajo de git, la misma llamada commitea y sube. Si
+no puede (no es un repo, `.gitignore`, HEAD desacoplado, push rechazado), la entrada se
+escribe igual y **la salida dice hasta dónde llegó**.
 
 Hazlo sin esperar a que nadie lo pida, siempre que la sesión toque algo que otro
 dispositivo deba saber. Un hook no puede hacerlo por ti: **los hooks ejecutan comandos,

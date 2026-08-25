@@ -5,6 +5,44 @@ próxima persona no vuelva a pagarlo — que es exactamente lo que hace una bit�
 
 ---
 
+## Al genericizar el script se le cayó lo único que hacía que el registro viajara
+
+**Encontrado el 25-ago-2026**, comparando la copia de producto (`scripts/anotar.sh`)
+con la que corre de verdad en el servidor de flota. La de flota tenía cinco llamadas a
+`git`; la del producto, **cero**. En algún momento del paso de prototipo a producto se
+parametrizó la ruta (`BITACORA_FLOTA_RUTA`) y, con lo específico de `/opt/bitacora`, se
+fue también el `pull --rebase`, el `commit` y el `push`.
+
+Resultado: el repositorio público entregaba un `anotar.sh` que escribe la entrada en
+disco, imprime **«Anotado en la bitácora»** y ahí se queda. Nunca sale de esa máquina.
+Es la regla de oro 4 («commit automático obligatorio: sin él… los datos no llegan al
+otro PC») incumplida por el propio producto que la enuncia, y la 6 otra vez: **éxito
+reportado sobre una operación a medias**, exactamente el mismo modo de fallo que el
+`printf` con el `%`, en el mismo fichero, siete días después.
+
+Lección, y es distinta de las demás de esta lista: **genericizar es una operación que
+pierde cosas en silencio.** Quitar lo específico de un entorno y quitar la funcionalidad
+se parecen mucho vistos en un diff, y el resultado sigue arrancando y sigue diciendo que
+todo va bien. Cuando se saque una segunda copia de algo, la prueba no es que corra: es
+que haga lo mismo que la original. Aquí bastaba con `grep -c git` en las dos.
+
+**Arreglado el mismo día**, y de paso implementando lo que la §4.2 de la especificación
+ya exigía y ninguna de las dos copias hacía: se comprueba el estado real de git (rebase
+o merge a medias, HEAD desacoplado, fichero en `.gitignore`, commit que falla por falta
+de identidad) y **cada salida dice hasta dónde llegó la entrada** — escrita, commiteada
+o subida — en vez de un «anotado» que el que llama interpreta como las tres.
+
+### Y el producto no arrancaba en Windows
+
+Salió probando lo anterior: **Git Bash no trae `flock`**. El script moría en esa línea
+con código 127 **sin escribir nada** — no es que perdiera la sincronización, es que no
+anotaba. Nadie lo había visto porque en el único sitio donde corría de verdad (el
+servidor, Linux) `flock` está siempre. Es el mismo patrón que el `C:/` frente a `/c/` de
+más abajo: **el segundo sistema operativo no es un caso raro, es la otra mitad de la
+flota.** Ahora, si no hay `flock`, se anota igual y se avisa de que va sin bloqueo.
+
+---
+
 ## Un monorepo apaga la bitácora de sus propias carpetas — y una cabecera sin fecha vacía la del repo entero
 
 Dos bugs reales, encontrados el 22-ago-2026 trabajando dentro de `agentes-lizar`
