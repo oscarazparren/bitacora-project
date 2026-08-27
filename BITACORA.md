@@ -11,6 +11,38 @@ Formato: `## AAAA-MM-DD — [dispositivo] titular`
 
 ---
 
+## 2026-08-27 — [PC viejo] Nuevo hook Stop: fuerza escribir, no solo leer
+
+El producto llevaba semanas leyendo solo (`sessionstart-leer.sh`). Escribir la
+bitácora de UN REPO siempre fue manual — lo dice el propio comentario de
+`scripts/anotar.sh` ("Para la bitácora de un repo NO se usa esto"). Caso real
+en kangurea-web, 27-ago-2026: tres commits de contenido seguidos sin ninguna
+entrada, hasta que Oscar preguntó por qué no había un trigger. Lo había para
+leer. No para escribir.
+
+**Añadido `hooks/sessionstop-comprobar.sh`.** Se registra en el `Stop` del
+`~/.claude/settings.json` global, junto al `SessionStart` de siempre. Al final
+de cada turno, en el repo donde se esté trabajando: si hay cambios sin
+commitear, o commits posteriores al último que tocó la bitácora del repo que
+tocan otros ficheros, bloquea (`decision:block`) con el motivo. Se calla si no
+hay repo git, la carpeta está en `BITACORA_IGNORAR`, o el repo no tiene
+bitácora propia — no se le impone la convención.
+
+Reutiliza `BITACORA_FICHERO` y `BITACORA_IGNORAR` de `~/.claude/bitacora.conf`,
+el mismo fichero que ya usa la lectura — cero configuración nueva. No usa
+`jq` (no estaba instalado en el Git Bash de Windows donde se escribió): el
+JSON de salida se construye a mano con `printf`, sin comillas dobles en el
+mensaje para no tener que escapar nada.
+
+Importante para quien lo instale en otra máquina: **`~/.claude/settings.json`
+no viaja por git** (es de fuera de este repo). Hay que añadir el bloque
+`Stop` a mano, o copiarlo de una máquina que ya lo tenga — a diferencia del
+script en sí, que sí llega solo con `git pull`.
+
+Probado antes de commitear: kangurea-web limpio (calla), este mismo repo con
+cambios sin commitear (bloquea, motivo correcto), un repo git real sin
+`BITACORA.md` (calla), una carpeta sin git (calla).
+
 ## 2026-08-25 — [PC Nuevo] Revisión a fondo de una espec externa del propio sistema — 3 errores críticos, el más grave sobre Git
 
 Óscar tenía en el Escritorio (`SISTEMA BITÁCORA/# ESPECIFICACIÓN TÉCNICA SISTEMA
