@@ -11,6 +11,52 @@ Formato: `## AAAA-MM-DD — [dispositivo] titular`
 
 ---
 
+## 2026-08-28 — [PC viejo] MODO DE FALLO NUEVO: el FRENO FALSO. Una entrada bien escrita dejó parada a la sesión siguiente
+
+Descubierto en caliente, media hora después de escribir las entradas de abajo, y es el
+hallazgo más útil del día porque no lo estábamos buscando.
+
+**Qué pasó.** Oscar abrió la sesión nueva para cerrar el trabajo pendiente. Esa sesión
+leyó la bitácora, la entendió bien, y concluyó: *«la respuesta honesta a "¿tienes algo
+que hacer?" es NO — lo que queda abierto está deliberadamente en espera»*. Citó las dos
+frases correctas. Y se equivocó en las dos:
+
+- Leyó **«no se toca hoy»** como «no tocar nada». Lo congelado era **bajar el número a
+  ciegas**; el propio texto decía «hipótesis, SIN MEDIR TODAVÍA». **Medir estaba
+  desbloqueado y era justo el siguiente paso.**
+- Leyó el **congelado de una semana** como previo a todo. En el texto era el ÚLTIMO
+  elemento de una lista en prosa corrida: «retirar X y Y; pasar la regla; y congelar».
+  El congelado empieza DESPUÉS de retirar los hooks.
+
+**Por qué importa, y por qué no es culpa del lector.** Su cautela fue la correcta:
+respetó una decisión escrita en vez de tirar para adelante — exactamente lo que se le
+pide a una sesión que hereda contexto. **El fallo es del texto, y el texto lo escribí
+yo.** La prueba de que una entrada está mal es que un lector competente y prudente
+saque de ella la conclusión contraria.
+
+**El modo de fallo, que es nuevo aquí.** Este repo lleva un mes persiguiendo **el
+silencio**: el sistema sabe algo y no lo dice (van cuatro casos). Esto es el espejo: **un
+FRENO FALSO.** La bitácora dijo algo, se leyó bien, y **paró trabajo correcto**. Una
+entrada que deja a la siguiente sesión sin poder avanzar ha fallado igual de grave que
+una que no llega — y es peor de detectar, porque parece prudencia y se lee como
+disciplina. Nadie sospecha de un agente que dice «esto está congelado, no lo toco».
+
+**Regla que sale de aquí, y va a aplicarse a las entradas de este repo:**
+
+1. **Un congelado tiene que decir qué NO congela.** «No se toca X» sin frontera se lee
+   como «no se toca nada».
+2. **Las listas de pendientes van numeradas, nunca en prosa corrida con puntos y coma.**
+   Un «y congelar una semana» al final de una enumeración se lee como si gobernara la
+   enumeración entera.
+3. **Cada pendiente lleva su estado explícito: DESBLOQUEADO o EN ESPERA.** Que la
+   siguiente sesión no tenga que deducirlo de la prosa; deducirlo es donde falla.
+
+Corregidas ya las dos entradas de abajo con esos tres criterios. **Los pasos 1 y 2 del
+rediseño (retirar los dos hooks, pasar la regla a `CLAUDE.md`) están DESBLOQUEADOS, y
+medir la grieta del presupuesto también.** Lo único en espera es cambiar el número del
+presupuesto sin medirlo antes, y el congelado de funcionalidad nueva, que empieza
+después de esos dos pasos.
+
 ## 2026-08-28 — [PC viejo] VERIFICADO end-to-end el arreglo del timeout. Y queda UNA grieta: el presupuesto se escapa (40s de un tope de 25)
 
 Nota corta de cierre del día. Léela junto a la entrada siguiente, que es la larga.
@@ -64,6 +110,10 @@ transcript. Se ve. Eso era justo lo que faltaba esta mañana.
 arregla la fuga (la espera sin acotar sigue ahí), solo cambiaría el número, y hacerlo
 sin medir a las 21:20 es exactamente lo que este repo lleva un mes aprendiendo a no
 hacer.
+
+**Congelado está CAMBIAR EL NÚMERO a ciegas. MEDIR no: medir es el siguiente paso y
+está desbloqueado.** Se dice explícito porque la primera sesión que leyó esto entendió
+lo contrario — ver la entrada del freno falso, más abajo.
 
 ## 2026-08-28 — [PC viejo] CUARTO fallo silencioso, y el peor: el hook moría por TIMEOUT y su propio log cantaba éxito
 
@@ -153,10 +203,17 @@ Eso resuelve dos de los tres fallos abiertos ELIMINANDO código:
   sesión» y «abre el chat en el repo que toca» son el MISMO consejo, y un chat por repo
   se mantiene corto solo, sin heurística de megabytes.
 
-Pendiente, en ese orden: retirar `sessionstop-comprobar.sh` (repite el error ya
-documentado el 16-ago: `Stop` se dispara en cada turno) y `userpromptsubmit-contexto.sh`;
-pasar la regla de redirección a `CLAUDE.md`, no a un hook; y **congelar funcionalidad
-una semana para usarlo en vez de construirlo**.
+Pendiente, en ese orden — **los pasos 1 y 2 están DESBLOQUEADOS, hay que hacerlos ya**:
+
+1. Retirar `sessionstop-comprobar.sh` (repite el error ya documentado el 16-ago:
+   `Stop` se dispara en cada turno) y `userpromptsubmit-contexto.sh`.
+2. Pasar la regla de redirección a `CLAUDE.md`, no a un hook.
+3. **Y ENTONCES** congelar funcionalidad una semana, para usarlo en vez de construirlo.
+
+El congelado es el paso 3: empieza **después** de 1 y 2, y afecta a funcionalidad
+NUEVA. Retirar hooks no es construir, es lo contrario. Se numera porque escrito en
+prosa corrida la primera sesión que lo leyó entendió que el congelado bloqueaba
+también los pasos 1 y 2, y se quedó parada.
 
 ## 2026-08-28 — [PC viejo] TRES FALLOS ABIERTOS del propio sistema, uno con daño medido hoy. Punto de partida
 
