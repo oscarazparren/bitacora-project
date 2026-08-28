@@ -37,6 +37,54 @@ RUTAS="${BITACORA_RUTAS:-$HOME/.claude/bitacora-rutas}"
 
 SALIDA=""
 
+# ---------- Presupuesto GLOBAL de tiempo ----------
+# Claude Code mata el hook al llegar a su timeout (45 s en settings.json) y DESCARTA
+# la salida ENTERA, sin avisar ni al usuario ni al agente. Cada llamada de red de aquí
+# abajo tenía ya su propio timeout, pero la SUMA no tenía ninguno, y esa suma no está
+# acotada: el 'git fetch' de la sección 0 corre una vez por repo CAMBIADO, en serie.
+# O sea que cuanto más trabajo hay que contar, más probable es morir antes de contarlo
+# — el fallo empeora justo cuando más falta hace.
+#
+# Medido el 28-ago-2026 en una sesión real: 69,5 s contra un plazo de 45. El hook
+# escribió además su línea de log de ÉXITO a los ~67 s, cuando llevaba 22 s muerto:
+# por eso los números cuadraban y no llegaba nada.
+#
+# A partir de aquí manda un reloj global. Lo LOCAL (la bitácora, que es lo que de
+# verdad importa) no cuesta red y sale siempre; lo de RED se abandona en cuanto se
+# agota el presupuesto, y se DICE que se ha abandonado.
+PRESUPUESTO="${BITACORA_PRESUPUESTO:-25}"   # segundos; debe quedar holgado bajo el timeout del hook
+INICIO_EPOCH=$(date +%s)
+DEGRADADO=""
+
+# Segundos que quedan del presupuesto. Nunca negativo.
+restante() {
+  local r=$(( PRESUPUESTO - ( $(date +%s) - INICIO_EPOCH ) ))
+  [ "$r" -lt 0 ] && r=0
+  printf '%s' "$r"
+}
+
+# ¿Merece la pena EMPEZAR algo de red que necesita al menos N segundos?
+hay_tiempo() {
+  [ "$(restante)" -ge "${1:-3}" ]
+}
+
+# Tope para una llamada concreta: lo que quede, sin pasar del máximo razonable.
+tope() {
+  local max="$1" r
+  r=$(restante)
+  [ "$r" -gt "$max" ] && r="$max"
+  [ "$r" -lt 1 ] && r=1
+  printf '%s' "$r"
+}
+
+# Deja constancia de lo que se saltó por falta de tiempo. Se le enseña al agente:
+# un límite que recorta en silencio es EXACTAMENTE el fallo que este proyecto
+# persigue, y ya van cuatro. Si se degrada, se dice.
+saltado() {
+  DEGRADADO="${DEGRADADO}  - $1
+"
+}
+
 # Carpetas que nunca se tocan: repos de referencia, dependencias, herramientas.
 es_carpeta_ignorada() {
   local ruta="$1" patron
@@ -163,8 +211,14 @@ usa_flota() {
 # INDICE_REPOS configurados; si falta cualquiera, esta sección no hace nada (no es
 # un fallo, es la sección desactivada).
 VISTO_ANTES=""
+LISTA=""
 if [ -n "$FLOTA_SSH" ] && [ -n "$INDICE_REPOS" ]; then
-  LISTA=$(ssh -o ConnectTimeout=8 -o BatchMode=yes "$FLOTA_SSH" "cat '$INDICE_REPOS'" 2>/dev/null || true)
+  if hay_tiempo 10; then
+    LISTA=$(timeout "$(tope 10)" ssh -o ConnectTimeout=5 -o BatchMode=yes "$FLOTA_SSH" "cat '$INDICE_REPOS'" 2>/dev/null || true)
+    [ -z "$LISTA" ] && saltado "índice de cambios: el servidor de flota no respondió a tiempo"
+  else
+    saltado "índice de cambios: sin presupuesto de tiempo para consultarlo"
+  fi
 
   if [ -n "$LISTA" ]; then
     # Snapshot del marcador ANTES de sobreescribirlo: la sección 1 lo necesita para
@@ -175,11 +229,16 @@ if [ -n "$FLOTA_SSH" ] && [ -n "$INDICE_REPOS" ]; then
     TMP=$(mktemp -d 2>/dev/null || { mkdir -p "/tmp/indice.$$"; echo "/tmp/indice.$$"; })
 
     # Preguntar a cada remoto en paralelo: solo la punta, sin clonar nada.
+    # Van en paralelo, así que la etapa entera cuesta lo que el más lento: se le
+    # da el presupuesto que quede, guardando 8 s para lo que viene detrás.
+    TOPE_LS=$(( $(restante) - 8 ))
+    [ "$TOPE_LS" -gt 15 ] && TOPE_LS=15
+    [ "$TOPE_LS" -lt 3 ] && TOPE_LS=3
     while read -r NOMBRE URL _; do
       case "${NOMBRE:-#}" in ''|'#'*) continue ;; esac
       [ -z "${URL:-}" ] && continue
       (
-        SHA=$(GIT_TERMINAL_PROMPT=0 timeout 15 git ls-remote "$URL" HEAD 2>/dev/null | cut -f1)
+        SHA=$(GIT_TERMINAL_PROMPT=0 timeout "$TOPE_LS" git ls-remote "$URL" HEAD 2>/dev/null | cut -f1)
         printf '%s\n' "${SHA:-ERROR}" > "$TMP/$NOMBRE"
       ) &
     done <<< "$LISTA"
@@ -219,7 +278,16 @@ if [ -n "$FLOTA_SSH" ] && [ -n "$INDICE_REPOS" ]; then
       DETALLE="ha cambiado"
       P=$(ruta_local "$NOMBRE")
       if [ -n "$P" ] && [ -n "${ANTES:-}" ]; then
-        timeout 20 git -C "$P" fetch -q --prune 2>/dev/null
+        # ESTE es el fetch que reventaba el plazo: en serie, una vez por repo
+        # cambiado. Ahora solo se hace si queda presupuesto. Sin él se sigue
+        # intentando el rev-list -- si los objetos ya están en local, funciona
+        # igual; y si no, el repo se anuncia como cambiado sin el detalle, que
+        # es justo la degradación que se quiere.
+        if hay_tiempo 8; then
+          timeout "$(tope 20)" git -C "$P" fetch -q --prune 2>/dev/null
+        else
+          saltado "detalle de commits de $NOMBRE (no dio tiempo al fetch; el repo SÍ ha cambiado)"
+        fi
         N=$(git -C "$P" rev-list --count "$ANTES..$AHORA" 2>/dev/null || true)
         if [ -n "$N" ] && [ "$N" != "0" ]; then
           DETALLE="$N commit(s) nuevo(s)"
@@ -319,7 +387,7 @@ PLANTILLA
       # 'fetch' antes de comparar: sin él, HEAD..@{upstream} compara contra lo
       # que el repo local ya sabía del remoto, no contra su estado real, y el
       # aviso no salta aunque el remoto lleve commits nuevos.
-      if timeout 5 git -C "$RAIZ" fetch --quiet 2>/dev/null; then
+      if hay_tiempo 5 && timeout "$(tope 5)" git -C "$RAIZ" fetch --quiet 2>/dev/null; then
         DETRAS=$(git -C "$RAIZ" rev-list --count HEAD..@{upstream} 2>/dev/null || echo 0)
         if [ "${DETRAS:-0}" -gt 0 ] 2>/dev/null; then
           SALIDA="${SALIDA}AVISO: este repo va $DETRAS commit(s) por detrás del remoto. La bitácora que sigue puede estar obsoleta; haz 'git pull' antes de fiarte de ella.
@@ -517,8 +585,14 @@ fi
 # ---------- 2. Bitácora de flota ----------
 # Infraestructura que cruza varios repos y servidores, y no cabe en ninguno.
 if usa_flota && [ -n "$FLOTA_RUTA" ]; then
-  CENTRAL=$(ssh -o ConnectTimeout=8 -o BatchMode=yes "$FLOTA_SSH" \
-    "sed -n '/^## /,\$p' '$FLOTA_RUTA' | head -n $MAX_LINEAS" 2>/dev/null | sanear_delimitadores || true)
+  CENTRAL=""
+  if hay_tiempo 8; then
+    CENTRAL=$(timeout "$(tope 12)" ssh -o ConnectTimeout=5 -o BatchMode=yes "$FLOTA_SSH" \
+      "sed -n '/^## /,\$p' '$FLOTA_RUTA' | head -n $MAX_LINEAS" 2>/dev/null | sanear_delimitadores || true)
+    [ -z "$CENTRAL" ] && saltado "bitácora de FLOTA: el servidor no respondió a tiempo"
+  else
+    saltado "bitácora de FLOTA: sin presupuesto de tiempo para leerla"
+  fi
   if [ -n "$CENTRAL" ]; then
     SALIDA="${SALIDA}=== BITACORA DE FLOTA (infraestructura: varios servidores y repos) ===
 $CENTRAL
@@ -535,11 +609,32 @@ fi
 
 # ---------- 3. Registro de ejecución (para poder demostrar que se dispara) ----------
 LOG="${BITACORA_LOG:-$HOME/.claude/bitacora-hook.log}"
-echo "$(date '+%Y-%m-%d %H:%M:%S') | cwd=$PWD | repo=${RAIZ:-ninguno} | bytes=${#SALIDA}" >> "$LOG"
+# El log registra el TIEMPO, no solo los bytes. Hasta el 28-ago-2026 solo decía
+# bytes, así que una ejecución que se pasaba del plazo y era descartada por Claude
+# Code dejaba una línea idéntica a la de un éxito. El log declaraba victoria
+# precisamente en el caso en que había fallado. Con los segundos delante, una
+# ejecución moribunda se ve de un vistazo.
+TRANSCURRIDO=$(( $(date +%s) - INICIO_EPOCH ))
+ESTADO="ok"
+[ -n "$DEGRADADO" ] && ESTADO="DEGRADADO"
+[ "$TRANSCURRIDO" -gt "$PRESUPUESTO" ] && ESTADO="FUERA-DE-PRESUPUESTO"
+echo "$(date '+%Y-%m-%d %H:%M:%S') | cwd=$PWD | repo=${RAIZ:-ninguno} | bytes=${#SALIDA} | ${TRANSCURRIDO}s/${PRESUPUESTO}s | $ESTADO" >> "$LOG"
 tail -50 "$LOG" > "$LOG.tmp" 2>/dev/null && mv "$LOG.tmp" "$LOG"
 
 # ---------- 4. Envolver en JSON ----------
 [ -z "$SALIDA" ] && exit 0
+
+# Si algo se quedó fuera por tiempo, se dice. Va al FINAL y dentro del sobre: el
+# agente tiene que poder distinguir "no hay nada que contar" de "no dio tiempo a
+# mirarlo". Son cosas distintas y hasta hoy se leían igual.
+if [ -n "$DEGRADADO" ]; then
+  SALIDA="${SALIDA}=== ESTA LECTURA VA INCOMPLETA (se agotó el presupuesto de ${PRESUPUESTO}s) ===
+$DEGRADADO
+Lo de arriba es correcto pero puede faltar algo. Si lo que buscas no aparece, míralo
+a mano en vez de dar por hecho que no existe.
+
+"
+fi
 
 N_ENTRADAS=$(printf '%s' "$SALIDA" | grep -c '^## ' || true)
 ULTIMA=$(printf '%s' "$SALIDA" | grep -m1 '^## ' | sed 's/^## //' | cut -c1-70)

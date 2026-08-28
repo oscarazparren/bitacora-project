@@ -11,6 +11,99 @@ Formato: `## AAAA-MM-DD — [dispositivo] titular`
 
 ---
 
+## 2026-08-28 — [PC viejo] CUARTO fallo silencioso, y el peor: el hook moría por TIMEOUT y su propio log cantaba éxito
+
+Arreglado. La sesión empezó con Oscar preguntando si la bitácora entera es un error y
+si le iría mejor borrándola. La respuesta corta, ya con números: **no**. La larga está
+más abajo, porque la pregunta era buena y la primera respuesta que di era mala.
+
+### El fallo
+
+Esta sesión no recibió bitácora. El hook, sin embargo, dejó su línea de log de éxito:
+`19:52:26 | bytes=3996`. La causa, en el transcript de la propia sesión:
+
+```
+"type": "hook_cancelled", "hookName": "SessionStart:startup",
+"durationMs": 69515, "timedOut": true, "timeoutMs": 45000
+```
+
+**69,5 segundos contra un plazo de 45.** Claude Code lo mató y descartó la salida.
+
+Y lo verdaderamente feo: el script escribió su línea de log a los ~67 s, cuando ya
+llevaba 22 s muerto. **El mecanismo puesto para «poder demostrar que se dispara»
+declaraba victoria justo en el caso en que fallaba.** Por eso el 28-ago por la mañana
+los números cuadraban y no llegaba nada: se estaba leyendo un log que mentía.
+
+### La causa raíz: timeouts locales, sin presupuesto global
+
+Cada llamada de red tenía su timeout. La SUMA no tenía ninguno, y no está acotada:
+
+```
+8s (ssh índice) + 15s (ls-remote, en paralelo) + N×20s (fetch, EN SERIE) + 5s + 8s (ssh flota)
+```
+
+El `git fetch` de la sección 0 corre **una vez por repo cambiado, secuencialmente**. Con
+un repo cambiado son 56 s; con dos, 76. Se midieron 69,5. Es decir: **cuanto más trabajo
+hay que contarte, más probable es que muera antes de contártelo.** El fallo empeora
+exactamente cuando más falta hace. Hoy hubo cinco arranques en 21 segundos (varias
+ventanas a la vez, visible en el log) y eso lo remató.
+
+Corrección a lo que pensé primero: los `ls-remote` sí van en paralelo, no eran 17×15 s.
+El culpable era el fetch en serie.
+
+### El arreglo
+
+Un **reloj global** (`BITACORA_PRESUPUESTO`, 25 s por defecto) al que se someten las
+cuatro llamadas de red. Al agotarse no se aborta: se abandona la red, **se entrega
+igualmente lo local** —la bitácora del repo, que es lo que importa y no cuesta red— y
+se DICE dentro del texto inyectado qué se quedó fuera. Lo que se sacrifica bajo carga
+es el índice; la bitácora del repo llega siempre. Ese reparto es deliberado.
+
+Y **el log deja de mentir**: ahora registra `22s/25s | ok`, `5s/5s | DEGRADADO` o
+`FUERA-DE-PRESUPUESTO`. Una ejecución moribunda se ve de un vistazo.
+
+Probado: normal (22 s, entrega, `ok`), presupuesto forzado a 5 s (6 s, **la bitácora del
+repo llega igual**, log `DEGRADADO`, aviso visible en el texto), carpeta sin git, y los
+tres JSON validados. Medido el reparto real con 17 repos: SSH 1,5 s + ls-remote 8 s +
+fetches ~12 s.
+
+**Lección, y van cuatro: el instrumento que mide el éxito tiene que medir también el
+tiempo.** Un log que solo cuenta bytes no distingue «entregado» de «muerto justo
+después de escribir esto». Si un hook tiene plazo, el plazo es parte del contrato y
+tiene que estar en la evidencia.
+
+### Y lo que descubrimos de paso: el sistema SÍ funciona, y más de lo que decía
+
+Buscando la firma real de inyección (`hook_success` + `hookEvent: SessionStart`, que no
+puede falsificarse desde un fichero) en los 48 transcripts de la máquina: **39 la
+tienen**. El arreglo de esta mañana funcionó. La conclusión de la entrada anterior
+(«cero, no ha llegado nunca») era cierta ANTES de ese arreglo, y ya no lo es.
+
+**Y la nota del 18-ago se vendía barata.** Decía que «como argumento de ahorro de tokens
+no se sostiene». La cuenta real: 2.500 tokens × ~70 sesiones ≈ 175.000 tokens, contra
+179 MB de transcripts (~45M tokens) = **0,4 %**. Lo que compra ese 0,4 % no son tokens
+sueltos, son **sesiones enteras que no se repiten**: una sola evitada de setenta paga el
+sistema varias veces. Este repo es además el 0,4 % de las sesiones de la máquina (3 de
+~70). La sensación de «llevo mucho insistiendo con esto» no está en el proyecto: está en
+los hooks, que corren en las 70.
+
+### Decidido: 3 hooks -> 1, y el diseño lo puso Oscar
+
+Idea suya, y es mejor que lo construido: **abrir sesión en una carpeta -> leer su
+bitácora; y si la conversación se va a otro repo, recomendar abrir otro chat allí.**
+Eso resuelve dos de los tres fallos abiertos ELIMINANDO código:
+
+- El nº2 (el hook `Stop` solo mira el repo de apertura) desaparece: no hay que rastrear
+  qué repos tocó la sesión ni arriesgar ruido — te vas al repo, no traes el repo aquí.
+- El nº3 (umbrales de contexto sin calibrar) se colapsa dentro del anterior: «corta la
+  sesión» y «abre el chat en el repo que toca» son el MISMO consejo, y un chat por repo
+  se mantiene corto solo, sin heurística de megabytes.
+
+Pendiente, en ese orden: retirar `sessionstop-comprobar.sh` (repite el error ya
+documentado el 16-ago: `Stop` se dispara en cada turno) y `userpromptsubmit-contexto.sh`;
+pasar la regla de redirección a `CLAUDE.md`, no a un hook; y **congelar funcionalidad
+una semana para usarlo en vez de construirlo**.
+
 ## 2026-08-28 — [PC viejo] TRES FALLOS ABIERTOS del propio sistema, uno con daño medido hoy. Punto de partida
 
 Anotado al cerrar una sesión larga en kangurea-web, a petición de Oscar, que vio antes

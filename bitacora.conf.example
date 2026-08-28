@@ -58,6 +58,25 @@ BITACORA_INDICE_REPOS=""
 # tras mucho tiempo sin visitar un repo en concreto.
 BITACORA_INDICE_TECHO=6
 
+# ---------- Presupuesto de tiempo del hook (segundos) ----------
+# El hook tiene un plazo: el "timeout" con que se registra en ~/.claude/settings.json
+# (45 s). Si lo agota, Claude Code lo MATA y DESCARTA la salida entera, sin avisar ni
+# al usuario ni al agente — se parece exactamente a que el hook no existiera.
+#
+# Este número es el reloj GLOBAL de todo lo que cuesta red (SSH a flota, ls-remote e
+# índice). Cada llamada tenía ya su timeout, pero la suma no tenía ninguno: el 'fetch'
+# del índice corre una vez por repo cambiado, en serie, así que cuanto más había que
+# contar, más fácil era morir antes de contarlo. Medido el 28-ago-2026: 69,5 s contra
+# un plazo de 45, con la bitácora perdida en silencio.
+#
+# Al agotarse NO se aborta: se abandona lo que quede de red, se entrega igualmente lo
+# local (la bitácora del repo, que es lo que de verdad importa y no cuesta red) y se
+# DICE qué se quedó fuera, dentro del propio texto inyectado.
+#
+# Déjalo con holgura bajo el timeout del hook. Medido en el PC viejo con 17 repos
+# vigilados: SSH 1,5 s + ls-remote en paralelo 8 s + los fetch del detalle ~12 s.
+BITACORA_PRESUPUESTO=25
+
 # Dónde guarda ESTA máquina lo último que vio de cada repo vigilado, y el mapa
 # opcional de repo -> carpeta local (nombre<TAB>ruta) para cuando el nombre de la
 # carpeta no coincide con el del repo. No suelen tocarse.
