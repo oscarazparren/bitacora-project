@@ -11,6 +11,30 @@ Formato: `## AAAA-MM-DD — [dispositivo] titular`
 
 ---
 
+## 2026-08-28 — [PC viejo] Ejecutados los pasos 1 y 2 del rediseño: retirados los dos hooks, la regla pasó a CLAUDE.md
+
+Continuación directa de la entrada del FRENO FALSO, de más abajo: esta sesión fue la
+que se quedó parada leyendo mal el "no se toca hoy" y el orden del congelado. Tras la
+corrección (numerado + DESBLOQUEADO/EN ESPERA explícito), quedaba ejecutar lo
+desbloqueado. Hecho.
+
+1. **Retirados `hooks/sessionstop-comprobar.sh` y `hooks/userpromptsubmit-contexto.sh`**
+   del repo (`git rm`) y su wiring en `~/.claude/settings.json` (entradas `Stop` y
+   `UserPromptSubmit`). Queda solo `SessionStart` -> `sessionstart-leer.sh`. JSON
+   validado tras el cambio.
+2. **Regla de redirección movida a `CLAUDE.md`** (sección nueva "Un chat por repo"):
+   si el trabajo se va a otro repo a mitad de sesión, anotar y cortar en el de origen,
+   abrir sesión nueva en el otro. Sustituye a lo que hacían los dos hooks retirados.
+   *No* se tocó la sección "Verificar antes de afirmar" del mismo fichero, añadida hoy
+   por otro motivo sin relación.
+3. **EN ESPERA** (no tocado, y no le toca a este paso): medir la grieta del
+   presupuesto (40s/25s, ver dos entradas más abajo) y el congelado de funcionalidad
+   nueva de una semana, que empieza ahora que 1 y 2 están hechos.
+
+Sin verificar todavía en vivo (haría falta una sesión nueva para comprobar que
+`Stop` y `UserPromptSubmit` ya no disparan) — lo anoto aquí en vez de darlo por
+bueno de memoria.
+
 ## 2026-08-28 — [PC viejo] MODO DE FALLO NUEVO: el FRENO FALSO. Una entrada bien escrita dejó parada a la sesión siguiente
 
 Descubierto en caliente, media hora después de escribir las entradas de abajo, y es el
