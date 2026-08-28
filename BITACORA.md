@@ -11,6 +11,59 @@ Formato: `## AAAA-MM-DD — [dispositivo] titular`
 
 ---
 
+## 2026-08-28 — [PC viejo] Tercer hook: avisar de cuándo sale a cuenta CORTAR la sesión (eje nuevo: el coste)
+
+**IMPORTANTE PARA EL OTRO PC: hay que tocar `~/.claude/settings.json` a mano.** El
+script llega con `git pull`, pero el registro del hook no viaja por git. Añadir un
+bloque `UserPromptSubmit` igual que los de `SessionStart`/`Stop`, apuntando a
+`hooks/userpromptsubmit-contexto.sh`, timeout 10.
+
+**La idea, de Oscar.** Este proyecto razonaba el momento de anotar sobre un solo eje:
+la PÉRDIDA — de ahí que NOTAS-DE-CAMPO.md elija `PreCompact` («el único instante en
+que el sistema sabe con certeza que el contexto está a punto de perderse»). Falta el
+otro eje: el COSTE. Cada turno reenvía toda la conversación, así que el precio por
+turno crece sin parar, mientras que escribir una entrada de bitácora cuesta siempre lo
+mismo. Llega un punto en que arrastrar el historial cuesta más de lo que aporta.
+
+**La consecuencia, que es lo que hacía falta ver:** «¿cada cuánto guardo?» y «¿cuándo
+abro otro chat?» son LA MISMA PREGUNTA. Sin bitácora, cortar es perder; con bitácora,
+cortar es reciclar. Se guarda cuando se va a cortar, y se corta cuando el contexto ya
+no compensa. Dicho de otra forma: **la bitácora no es documentación, es un compresor de
+contexto**. Medido hoy en kangurea-web: 2,5 MB de transcript cuyo valor entero cabía en
+las dos entradas que generó, ~4 KB. Compresión ~600:1, y lo que se tira es ruido.
+
+**Y no es solo dinero.** Con el contexto cargado el agente falla más. En esa misma
+sesión: olvidó anotar en la bitácora teniéndolo como norma, y dio por verificados unos
+bind-mounts que no lo estaban. Fallos de atención, no de conocimiento — justo lo que le
+pasa a un contexto sobrecargado. Arrancar limpio leyendo la bitácora tiene la misma
+información útil con muchísimo menos ruido.
+
+**Añadido `hooks/userpromptsubmit-contexto.sh`.** Se dispara al enviar el usuario un
+mensaje (antes de que el agente responda), mide el transcript de la sesión y, si cruza
+umbral, inyecta `additionalContext` para que el agente sugiera cortar AL FINAL de su
+respuesta, sin interrumpir lo que se esté haciendo. Umbrales: 2 MB aviso, 3,5 MB
+urgente, configurables (`BITACORA_CONTEXTO_AVISO` / `_URGENTE`). Un solo aviso por
+escalón y sesión — repetirlo en cada turno es el error ya documentado aquí con el otro
+hook. Sin jq ni node: wc, grep y sed.
+
+**Regalo del corte, que resuelve una duda vieja:** cambiar de modelo tiene un peaje
+(la caché de prompt va ligada al modelo), pero cortar la sesión tira esa caché
+igualmente — así que EN EL INSTANTE DEL CORTE cambiar de modelo sale gratis. Por eso el
+aviso incluye el modelo en uso. La respuesta a «¿bajo a Sonnet?» nunca fue sí ni no:
+era «no a mitad de chat, sí al empezar el siguiente».
+
+**Qué NO hace:** no calcula el punto exacto — haría falta saber cuántos turnos quedan.
+Es una heurística con umbral. El hook mide (peso, turnos, modelo) y el agente juzga si
+cortar ahí tiene sentido y qué modelo conviene después, que depende del trabajo que
+venga y el hook no puede saberlo.
+
+**Umbrales calibrados** con sesiones reales de kangurea-web: 734 KB (corta, cómoda),
+2,5 MB (larga, ya con despistes), 4,3 MB (muy pasada). A revisar con uso real.
+
+**Probado antes de commitear:** sesión de 2,5 MB (avisa, con datos correctos), misma
+sesión otra vez (no repite), sesión de 734 KB (calla), sin `session_id` (calla),
+`session_id` inexistente (calla), y el JSON de salida validado.
+
 ## 2026-08-28 — [PC viejo] El hook no había entregado NUNCA una bitácora: tres fallos en cadena
 
 Oscar preguntó si esto servía para algo. Se buscó la firma de una inyección real
