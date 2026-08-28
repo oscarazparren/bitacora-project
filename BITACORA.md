@@ -11,6 +11,45 @@ Formato: `## AAAA-MM-DD — [dispositivo] titular`
 
 ---
 
+## 2026-08-28 — [PC viejo] El hook no había entregado NUNCA una bitácora: tres fallos en cadena
+
+Oscar preguntó si esto servía para algo. Se buscó la firma de una inyección real
+(`Bitácora leída: <número>`) en TODOS los transcripts de la máquina: **cero**. El hook se
+disparaba, escribía su log y producía JSON válido de 19.550 bytes — y no llegaba nada.
+Tres causas independientes, las tres silenciosas.
+
+**1. Pasarse del techo no trunca: descarta el envío ENTERO.** `lizar-informes` no estaba
+en `/opt/bitacora/repos.txt`, así que no tenía fecha en el índice y la sección 1 caía al
+`else` con `MAX_ENTRADAS=4` en vez de `INDICE_TECHO=2`. Cuatro entradas = 15.113
+caracteres, total 18.777. Claude Code no recorta: tira el envío completo y no deja rastro
+ni en el transcript ni en el `systemMessage`. Añadido el repo al índice, pero eso era solo
+el disparador.
+
+**2. Los dos relojes compartían campo.** `$VISTO` guardaba a la vez «el índice consultó el
+remoto» y «leíste esta bitácora». La sección 0 lo reescribe para TODOS los repos desde
+CUALQUIER carpeta, así que abrir un chat en el escritorio marcaba como leído un repo que
+no habías tocado en días: el corte salía casi siempre «hoy» y el filtro se lo comía todo.
+Al meter el repo en el índice, el fallo 1 se convirtió en este — 19 entradas leyéndose
+«vacía todavía». Separados en dos ficheros: `$VISTO` (SHA del índice) y `$LEIDO`
+(lecturas, indexado por RUTA y escrito solo cuando esa bitácora se muestra de verdad).
+
+**3. No había suelo.** Cualquier filtro que se pasara de listo daba cero entradas sin
+decirlo. Ahora, si el fichero tiene entradas, se enseña al menos la más reciente y se
+AVISA de cuántas quedan.
+
+Añadidos dos techos de caracteres: 6.000 para la sección del repo (mismo motivo que ya
+obligó a poner dos en 1b: las entradas no pesan igual) y 10.000 global, este último
+cortando por líneas enteras con un `[CORTADO: ...]` visible.
+
+El corte de fecha solo avanza cuando cambia el DÍA, a propósito: el hook se dispara dos
+veces por sesión (medido, 11 s de diferencia) y si cada disparo moviera el corte, el
+segundo se quedaría sin nada que enseñar.
+
+**Lección, la misma y van tres:** lo que hay que perseguir en esta herramienta no es el
+error, es el silencio. Los tres fallos eran invisibles desde dentro de la sesión — el
+agente no puede echar en falta algo que nunca llegó, y el usuario acaba concluyendo que
+el hook no existe. Cualquier límite nuevo tiene que fallar ruidosamente o no ponerse.
+
 ## 2026-08-27 — [PC viejo] Nuevo hook Stop: fuerza escribir, no solo leer
 
 El producto llevaba semanas leyendo solo (`sessionstart-leer.sh`). Escribir la

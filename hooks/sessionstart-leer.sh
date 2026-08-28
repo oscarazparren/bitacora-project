@@ -29,7 +29,10 @@ INDICE_REPOS="${BITACORA_INDICE_REPOS:-}"    # ruta remota (vía FLOTA_SSH) a la
 INDICE_TECHO="${BITACORA_INDICE_TECHO:-6}"   # techo duro de entradas por repo aunque la fecha de referencia permita más
 CARPETA_TECHO="${BITACORA_CARPETA_TECHO:-3}" # techo de ENTRADAS de la bitácora de la CARPETA activa (monorepo), no la del repo
 CARPETA_MAX_CHARS="${BITACORA_CARPETA_MAX_CHARS:-2500}" # techo de CARACTERES para esa misma sección; las entradas no pesan igual, así que el número de entradas solo no basta (ver sección 1b)
+REPO_MAX_CHARS="${BITACORA_REPO_MAX_CHARS:-6000}"       # techo de CARACTERES de la sección 1 (bitácora del repo). Mismo motivo que CARPETA_MAX_CHARS: contar entradas no acota el tamaño porque no pesan igual
+MAX_CHARS_TOTAL="${BITACORA_MAX_CHARS_TOTAL:-10000}"    # lo que Claude Code admite de un hook. Pasarse NO cuesta "un poco menos de contexto": descarta el envío ENTERO y sin avisar (ver sección 4)
 VISTO="${BITACORA_VISTO:-$HOME/.claude/bitacora-visto}"
+LEIDO="${BITACORA_LEIDO:-$HOME/.claude/bitacora-leido}"  # cuándo se LEYÓ la bitácora de cada repo (ruta<TAB>corte<TAB>última lectura). Distinto de $VISTO, que son los SHA del índice: ver sección 1
 RUTAS="${BITACORA_RUTAS:-$HOME/.claude/bitacora-rutas}"
 
 SALIDA=""
@@ -98,6 +101,28 @@ entradas_recientes() {
 "
     incluidas=$((incluidas + 1))
   done
+  # Suelo mínimo: si el filtro por fecha (o un techo mal puesto) deja CERO entradas
+  # pero el fichero SÍ las tiene, se enseña igualmente la más reciente. Una bitácora de
+  # 19 entradas leyéndose "vacía todavía" es el peor modo de fallo de esta herramienta
+  # (ver NOTAS-DE-CAMPO.md): no avisa de nada y parece que no hay nada que saber.
+  # Enseñar de menos es aceptable; enseñar cero cuando hay algo, no.
+  #
+  # Bug real que obliga a esto, encontrado el 28-ago-2026 en lizar-informes: el
+  # marcador del índice lo reescribe CUALQUIER sesión desde CUALQUIER carpeta (la
+  # sección 0 no mira dónde estás), así que la fecha de corte de un repo era casi
+  # siempre "hoy" aunque no hubieras abierto ese repo en una semana -- y el filtro se
+  # comía todas sus entradas. El suelo no arregla esa confusión de fechas, solo impide
+  # que se manifieste como silencio.
+  SUELO_APLICADO=""
+  if [ "$incluidas" -eq 0 ] && [ "${ENTRADAS_TOTAL:-0}" -gt 0 ]; then
+    f=$(ls "$dir" 2>/dev/null | sort | head -n 1)
+    if [ -n "$f" ]; then
+      ENTRADAS_TEXTO="$(cat "$dir/$f")
+"
+      incluidas=1
+      SUELO_APLICADO="si"
+    fi
+  fi
   ENTRADAS_OMITIDAS=$((ENTRADAS_TOTAL - incluidas))
   rm -rf "$dir"
 }
@@ -330,39 +355,67 @@ PLANTILLA
 "
       fi
 
-      # Fecha de la última vez que ESTA máquina vio ESTE repo, según el marcador del
-      # índice (sección 0), guardado ANTES de que esa sección lo sobreescriba. Si el
-      # nombre local no coincide con el de la lista vigilada, se busca por ruta.
-      FECHA_REPO_DIA=""
-      if [ -n "$VISTO_ANTES" ] && [ -f "$VISTO_ANTES" ] && [ -n "${LISTA:-}" ]; then
-        NOMBRE_CANON=""
-        if awk -v n="$NOMBRE" '$1==n{f=1} END{exit !f}' "$VISTO_ANTES"; then
-          NOMBRE_CANON="$NOMBRE"
-        else
-          while read -r N _ _; do
-            case "${N:-#}" in ''|'#'*) continue ;; esac
-            P=$(ruta_local "$N")
-            if [ -n "$P" ] && [ "$P" = "$RAIZ" ]; then NOMBRE_CANON="$N"; break; fi
-          done <<< "$LISTA"
-        fi
-        [ -n "$NOMBRE_CANON" ] && FECHA_REPO_DIA=$(awk -v n="$NOMBRE_CANON" '$1==n {print $3; exit}' "$VISTO_ANTES")
+      # Desde cuándo enseñar entradas: la última vez que se LEYÓ la bitácora de ESTE
+      # repo. Ojo, que aquí estaba el fallo gordo: antes esta fecha salía del marcador
+      # del índice ($VISTO), y ese marcador lo reescribe la sección 0 para TODOS los
+      # repos desde CUALQUIER carpeta -- abrir un chat en el escritorio marcaba como
+      # "visto" un repo que no habías tocado en una semana. "El índice consultó el
+      # remoto" y "leíste esta bitácora" son dos cosas distintas y compartían campo:
+      # el corte salía casi siempre "hoy" y el filtro se comía todas las entradas, sin
+      # decir nada (encontrado el 28-ago-2026 en lizar-informes, 19 entradas leyéndose
+      # "vacía todavía"). Ahora son dos ficheros: $VISTO para los SHA del índice,
+      # $LEIDO para las lecturas. Se indexa por RUTA, no por nombre: es única y no
+      # depende de que el repo esté en la lista vigilada.
+      LEIDO_CORTE=""; LEIDO_ULTIMA=""
+      if [ -f "$LEIDO" ]; then
+        LEIDO_CORTE=$(awk -v r="$RAIZ" -F'\t' '$1==r {print $2; exit}' "$LEIDO")
+        LEIDO_ULTIMA=$(awk -v r="$RAIZ" -F'\t' '$1==r {print $3; exit}' "$LEIDO")
+      fi
+      # El corte solo avanza cuando cambia el DÍA, no en cada lectura: el hook se
+      # dispara varias veces por sesión (medido: dos veces, 11 s de diferencia), y si
+      # cada disparo moviera el corte, el segundo ya no tendría nada que enseñar. Así,
+      # todas las sesiones del mismo día ven la MISMA ventana: lo ocurrido desde la
+      # última vez que abriste este repo otro día. La primera vez de todas el corte
+      # queda vacío a propósito -> sin filtro de fecha, y manda MAX_ENTRADAS.
+      HOY_DIA=$(date '+%Y-%m-%d')
+      if [ "$LEIDO_ULTIMA" = "$HOY_DIA" ]; then
+        FECHA_REPO_DIA="$LEIDO_CORTE"
+      else
+        FECHA_REPO_DIA="$LEIDO_ULTIMA"
       fi
 
       # Con índice activo para este repo, el techo es INDICE_TECHO (más generoso,
       # porque la fecha ya acota); sin él, se mantiene MAX_ENTRADAS de siempre, para
       # no cambiar el comportamiento de quien no configura el índice.
       if [ -n "$FECHA_REPO_DIA" ]; then
-        entradas_recientes "$F" "$INDICE_TECHO" "$FECHA_REPO_DIA"
+        T_REPO="$INDICE_TECHO"; DESDE_REPO="$FECHA_REPO_DIA"
       else
-        entradas_recientes "$F" "$MAX_ENTRADAS" ""
+        T_REPO="$MAX_ENTRADAS"; DESDE_REPO=""
       fi
+      # Y un techo de CARACTERES además del de entradas, por el mismo motivo que ya
+      # obligó a poner dos en la sección 1b: las entradas no pesan igual, así que
+      # contarlas no acota el tamaño. Sin esto, este repo emitía 4 entradas = 15.113
+      # caracteres, la salida entera se iba a 18.777 y Claude Code la descartaba
+      # COMPLETA -- ni registro ni systemMessage (medido el 28-ago-2026). Se sueltan
+      # entradas enteras, nunca a medias, y nunca por debajo de 1: de eso se encarga el
+      # suelo de entradas_recientes().
+      while :; do
+        entradas_recientes "$F" "$T_REPO" "$DESDE_REPO"
+        [ "${#ENTRADAS_TEXTO}" -le "$REPO_MAX_CHARS" ] && break
+        [ "$T_REPO" -le 1 ] && break
+        T_REPO=$((T_REPO - 1))
+      done
       ENTRADAS=$(printf '%s' "$ENTRADAS_TEXTO" | sanear_delimitadores)
       if [ -n "$ENTRADAS" ]; then
         SALIDA="${SALIDA}=== BITACORA DEL REPO: $NOMBRE ===
 $ENTRADAS
 
 "
-        if [ "$ENTRADAS_OMITIDAS" -gt 0 ]; then
+        if [ -n "$SUELO_APLICADO" ]; then
+          SALIDA="${SALIDA}AVISO: el filtro por fecha dejaba esta sección en CERO entradas (marcador: $FECHA_REPO_DIA). Se enseña la más reciente de todos modos. Quedan $ENTRADAS_OMITIDAS entrada(s) más en $F — si necesitas contexto de días anteriores, léelas ahí.
+
+"
+        elif [ "$ENTRADAS_OMITIDAS" -gt 0 ]; then
           SALIDA="${SALIDA}(quedan $ENTRADAS_OMITIDAS entrada(s) sin mostrar aquí, la más reciente del $FECHA_CORTE hacia atrás — completas en $F)
 
 "
@@ -377,6 +430,17 @@ Sin entradas. Si en esta sesión cambias algo que otro dispositivo deba saber, a
       SALIDA="${SALIDA}Para anotar aquí: añade una entrada '## \$(date +%F) — [$ETIQUETA] titular' justo debajo del '---' de $F, y haz commit.
 
 "
+
+      # Anotar que esta bitácora se ha leído. Se guarda como corte exactamente la
+      # ventana que se ha usado en esta lectura (ver arriba), para que las demás
+      # sesiones del día vean lo mismo y mañana el corte pase a ser hoy.
+      NUEVO_CORTE="$FECHA_REPO_DIA"
+      [ -f "$LEIDO" ] || : > "$LEIDO" 2>/dev/null
+      if [ -f "$LEIDO" ]; then
+        awk -v r="$RAIZ" -v c="$NUEVO_CORTE" -v u="$HOY_DIA" -F'\t' \
+          '$1!=r {print} END {printf "%s\t%s\t%s\n", r, c, u}' "$LEIDO" > "$LEIDO.tmp" 2>/dev/null \
+          && mv "$LEIDO.tmp" "$LEIDO"
+      fi
     fi
   fi
 fi
@@ -497,6 +561,26 @@ No sustituye a la verificación: antes de tocar producción, comprueba el estado
 
 PIE="
 --- FIN DEL REGISTRO ---"
+
+# Techo GLOBAL: la última red, y la que de verdad importa. Claude Code descarta el
+# envío ENTERO -- sin avisar, ni al usuario ni al agente -- si se pasa de
+# MAX_CHARS_TOTAL. Es decir: pasarse no cuesta "un poco menos de contexto", cuesta
+# TODO, y encima se parece exactamente a que el hook no exista (que fue justo la
+# conclusión a la que llegó Oscar el 28-ago-2026, con razón: llevaba semanas sin
+# recibir una sola bitácora y no había forma de notarlo desde dentro de la sesión).
+# Los techos por sección de arriba deberían bastar; esto está por si no bastan.
+# Recorta por LÍNEAS enteras y lo DICE. Perder texto avisando es recuperable.
+TOTAL=$((${#CABECERA} + ${#SALIDA} + ${#PIE}))
+if [ "$TOTAL" -gt "$MAX_CHARS_TOTAL" ]; then
+  AVISO_CORTE="
+[CORTADO: el registro completo ocupaba $TOTAL caracteres y el máximo que admite un hook
+son $MAX_CHARS_TOTAL. Lo que falta NO está perdido: está en la BITACORA.md del repo. Si lo que
+buscas no aparece arriba, ábrela y léela.]
+"
+  HUECO=$((MAX_CHARS_TOTAL - ${#CABECERA} - ${#PIE} - ${#AVISO_CORTE}))
+  [ "$HUECO" -lt 500 ] && HUECO=500
+  SALIDA="$(printf '%s' "$SALIDA" | head -c "$HUECO" | sed '$d')$AVISO_CORTE"
+fi
 
 printf '%s%s%s' "$CABECERA" "$SALIDA" "$PIE" | node -e "
 let d='';
