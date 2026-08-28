@@ -11,6 +11,72 @@ Formato: `## AAAA-MM-DD — [dispositivo] titular`
 
 ---
 
+## 2026-08-28 — [PC viejo] TRES FALLOS ABIERTOS del propio sistema, uno con daño medido hoy. Punto de partida
+
+Anotado al cerrar una sesión larga en kangurea-web, a petición de Oscar, que vio antes
+que yo que lo importante de hoy no era el agente de correo sino esto. **Esta entrada es
+el punto de partida del siguiente trabajo aquí.** Los tres están demostrados, no
+sospechados.
+
+### 1. El corte por líneas de la bitácora de FLOTA nos costó dinero hoy (el más grave)
+
+`BITACORA_MAX_LINEAS` está en 40 para flota en el PC viejo. Consecuencia real, medida:
+
+- Por la mañana, el **PC nuevo** diagnosticó una avería del operator (21 bind-mounts
+  anidados ocultos bajo el montaje del padre tras los renombrados `.OLD-migrado-fase5`)
+  y la anotó en flota.
+- Por la tarde, el **PC viejo** diagnosticó **la misma avería desde cero**, sin verla,
+  porque su entrada quedaba fuera del corte de 40 líneas. Mismo problema, misma causa,
+  dos diagnósticos completos, dos facturas.
+
+**Es exactamente el fallo que este proyecto existe para impedir, cometido por el propio
+proyecto.** Y el modo de fallo es el ya conocido —truncado ciego en silencio, el mismo
+que motivó pasar de cortar por líneas a cortar por entradas en la bitácora de repo—
+pero la de FLOTA se quedó cortando por líneas. El comentario de `bitacora.conf.example`
+dice que para flota el corte por líneas «no sufre igual» porque solo dice DÓNDE mirar;
+hoy quedó demostrado que sí sufre: una sola entrada larga tapa todo lo demás.
+
+Además, en el PC viejo `BITACORA_INDICE_TECHO=2` y `MAX_ENTRADAS=4` son un parche
+anotado como tal («esto es un parche, no el arreglo… el arreglo de verdad es el filtro
+por relevancia»). Sigue pendiente.
+
+### 2. El hook Stop solo mira el repo desde el que se abrió la sesión
+
+`sessionstop-comprobar.sh` (escrito esta misma mañana) hace `git rev-parse
+--show-toplevel` y comprueba **ese** repo. Pero una sesión toca varios: la de hoy se
+abrió en `kangurea-web` y modificó además `lizar-panel`, `lizar-correo` y este mismo
+repo.
+
+**Demostrado antes de anotar esto:** con un fichero sin trackear en `lizar-panel`, el
+hook ejecutado desde `kangurea-web` no dijo nada. Hoy no se perdió trabajo porque se
+fue commiteando sobre la marcha, pero eso es suerte, no diseño.
+
+Idea (sin decidir): recordar los repos tocados durante la sesión —los `cwd` vistos, o
+los repos bajo `~/repos` con cambios recientes— y comprobarlos todos, no solo el
+actual. Cuidado con el ruido: avisar de repos que el usuario no ha tocado sería peor
+que callar.
+
+### 3. Los umbrales del hook de contexto están sin calibrar
+
+`userpromptsubmit-contexto.sh` avisa a 2 MB y 3,5 MB de transcript. Calibrado con tres
+sesiones sueltas (734 KB, 2,5 MB, 4,3 MB), no con uso real. Falta ver si avisa pronto o
+tarde. El aviso disparó por primera vez en vivo hoy, a 2,6 MB / 498 turnos, y el
+momento pareció razonable — pero es UNA muestra.
+
+### Patrón transversal que salió hoy, y que quizá sea lo de fondo
+
+Dos averías del mismo día, en sistemas distintos, con la misma forma:
+
+- El panel sabía que el operator devolvía 404 y lo mostraba como «falta generar el
+  token» — mandó a buscar el fallo en un dato que estaba correcto desde el 14-ago.
+- El agente de correo sabe desde el 21-ago que el buzón de un cliente se está llenando
+  y lo descarta en silencio, 93 veces en un día.
+
+**El sistema sabe algo importante y no lo dice.** No es un bug de un repo: es una forma
+de fallar. Merece pensar si la bitácora (o los hooks) pueden capturar esa clase de
+señal, porque las dos se descubrieron de casualidad y las dos llevaban días o semanas
+sonando sin que nadie las oyera.
+
 ## 2026-08-28 — [PC viejo] Tercer hook: avisar de cuándo sale a cuenta CORTAR la sesión (eje nuevo: el coste)
 
 **IMPORTANTE PARA EL OTRO PC: hay que tocar `~/.claude/settings.json` a mano.** El
