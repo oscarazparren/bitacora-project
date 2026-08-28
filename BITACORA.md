@@ -35,6 +35,10 @@ Sin verificar todavía en vivo (haría falta una sesión nueva para comprobar qu
 `Stop` y `UserPromptSubmit` ya no disparan) — lo anoto aquí en vez de darlo por
 bueno de memoria.
 
+**Verificado**, mismo día: Oscar abrió sesión nueva (`b8e7e91c...`), se revisó su
+transcript directamente (no el resumen que dio) y aparece `hookEvent: SessionStart`
+tres veces, `Stop` y `UserPromptSubmit` cero. Retirada confirmada, no solo aplicada.
+
 ## 2026-08-28 — [PC viejo] MODO DE FALLO NUEVO: el FRENO FALSO. Una entrada bien escrita dejó parada a la sesión siguiente
 
 Descubierto en caliente, media hora después de escribir las entradas de abajo, y es el
