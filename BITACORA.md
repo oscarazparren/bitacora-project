@@ -11,6 +11,60 @@ Formato: `## AAAA-MM-DD — [dispositivo] titular`
 
 ---
 
+## 2026-08-28 — [PC viejo] VERIFICADO end-to-end el arreglo del timeout. Y queda UNA grieta: el presupuesto se escapa (40s de un tope de 25)
+
+Nota corta de cierre del día. Léela junto a la entrada siguiente, que es la larga.
+
+### Lo verificado, y cómo (no por informe: por transcript)
+
+El ciclo completo funciona: **escribir → commit → push → una sesión NUEVA lo recibe.**
+Comprobado sobre los ficheros, no sobre lo que dijo nadie:
+
+```
+iny=1  cancel=0   4756951c-...jsonl   <- sesión nueva: inyección real
+iny=0  cancel=1   902f1450-...jsonl   <- la que murió por timeout
+```
+
+(`iny` = `"type":"hook_success"` con `"hookEvent":"SessionStart"`, que no se puede
+falsificar desde un fichero, a diferencia de la frase «Bitácora leída».)
+
+Se verificó **a pesar** de tener delante un resumen correcto de la sesión nueva, y
+por un motivo que conviene no olvidar: el fallo de esta mañana ERA un informe de éxito
+falso. Creer al informe habría cerrado el caso en falso por segunda vez en un día.
+
+### La grieta que queda abierta (PENDIENTE, quinto de la lista)
+
+El log del arranque de esa misma sesión:
+
+```
+21:16:53 | repo=ninguno      | 29s/25s | FUERA-DE-PRESUPUESTO
+21:17:05 | bitacora-project  | 40s/25s | FUERA-DE-PRESUPUESTO
+21:17:11 | bitacora-project  | 20s/25s | ok
+```
+
+**40 segundos con un tope de 25.** Entregó, porque 40 < 45, pero con 5 s de margen. El
+fallo del timeout está **mitigado, no cerrado**: sin reloj habrían sido los 69 s de la
+mañana y no habría llegado nada; con reloj llega por los pelos.
+
+**Hipótesis, sin medir todavía:** el reloj acota cada llamada, pero la etapa de
+`ls-remote` lanza 17 procesos git en paralelo y espera a los 17 (`wait`). Hubo tres
+arranques en 18 segundos → ~51 procesos git simultáneos. En Windows, `timeout` acota lo
+que tarda cada git, no lo que tarda el sistema en poder lanzarlos: **la cola de arranque
+no está dentro de ningún reloj.**
+
+**Arreglo propuesto:** acotar la ETAPA, no solo cada hijo. Pasado el plazo se deja de
+esperar y se usa lo que haya llegado, en lugar de esperar a los 17. Los repos que no
+contestaron ya tienen su camino: se marcan FALLIDOS y se conserva su marcador viejo.
+
+**Por qué se puede dormir con esto abierto:** ya no falla en silencio. Una ejecución que
+se pase deja `FUERA-DE-PRESUPUESTO` en el log y, si la matan, un `hook_cancelled` en el
+transcript. Se ve. Eso era justo lo que faltaba esta mañana.
+
+**No se toca hoy a propósito.** El presupuesto se deja en 25 sin bajarlo: bajarlo no
+arregla la fuga (la espera sin acotar sigue ahí), solo cambiaría el número, y hacerlo
+sin medir a las 21:20 es exactamente lo que este repo lleva un mes aprendiendo a no
+hacer.
+
 ## 2026-08-28 — [PC viejo] CUARTO fallo silencioso, y el peor: el hook moría por TIMEOUT y su propio log cantaba éxito
 
 Arreglado. La sesión empezó con Oscar preguntando si la bitácora entera es un error y
