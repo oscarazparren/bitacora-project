@@ -11,6 +11,76 @@ Formato: `## AAAA-MM-DD — [dispositivo] titular`
 
 ---
 
+## 2026-08-29 — [PC viejo] MEDIDA la grieta del presupuesto: el paralelo NO es paralelo. 45 repos que tardan 1s cada uno tardan 129s juntos
+
+Ejecutado el pendiente DESBLOQUEADO del 28-ago (medir, que nunca estuvo congelado) y el
+punto 4 del PC Nuevo. La hipótesis acertaba el sitio y se quedaba corta en el motivo.
+
+### El punto 4 del PC Nuevo, hecho
+
+`BITACORA_MAX_LINEAS=80` puesto en el `bitacora.conf` de esta máquina. **No estaba
+escrito antes**: esta máquina corría con el defecto del script (40), así que la frase
+«el PC viejo sigue con MAX_LINEAS=40» era cierta de efecto pero no de fichero — no
+había línea que cambiar, había línea que añadir. Las dos máquinas vuelven a coincidir.
+
+### La medición, y por qué la hipótesis se quedaba corta
+
+El 28-ago se supuso: «la etapa de `ls-remote` lanza 17 procesos git y espera a los 17,
+y esa espera no está acotada». El sitio es ese. El motivo es peor:
+
+```
+ssh índice ....................  2s
+ssh flota .....................  2s
+ls-remote de UN repo ..........  1s
+ls-remote de 45 repos EN PARALELO ... 129s   <- aquí está todo
+```
+
+**45 procesos de 1s no tardan 1s: tardan 129.** Salen ~2,9s por repo amortizado, o sea
+que lanzarlos «en paralelo» cuesta casi lo mismo que lanzarlos en serie. En Git Bash
+sobre Windows el `&` no compra concurrencia real cuando cada hijo abre su propia
+conexión TLS a GitHub: lo que domina es crear el proceso y el handshake, y eso se
+serializa solo.
+
+Cuadra con el hook real: el índice tiene **17** repos, y 17 × 2,65s ≈ **45s**, que es
+justo lo que se midió con presupuesto libre (45s, cierre limpio, 6.568 chars). Dos
+puntos de medida coherentes entre sí; el escalado es lineal con el número de repos, no
+plano como se creía al escribir «en paralelo».
+
+**La consecuencia de diseño:** el coste del arranque crece con el catálogo de repos. El
+28-ago se razonaba sobre 17; hoy hay **45 carpetas en `~/repos`**. El día que el índice
+pase de 17 a 45, el arranque se va a 129s y no entrega nada. La grieta no es un pico
+esporádico por arranques solapados: es una cuesta con pendiente conocida.
+
+### Daño visto hoy, sin buscarlo
+
+El arranque de esta misma sesión (10:12:50) fue `42s/25s | FUERA-DE-PRESUPUESTO`, y el
+registro llegó **incompleto**: se quedó sin leer el detalle de commits de este repo. Y
+la primera prueba que lancé se quedó sin flota por lo mismo. El log de hoy: cuatro
+FUERA-DE-PRESUPUESTO y tres DEGRADADO en doce arranques. Ya no falla en silencio —
+esto se ve— pero falla a menudo.
+
+### Pendientes
+
+1. **EN ESPERA — acotar la ETAPA de `ls-remote`**, no cada hijo: pasado el plazo, dejar
+   de esperar y usar lo que haya llegado, marcando FALLIDOS los que no contestaron. Es
+   el arreglo bueno y ahora está medido, pero **es funcionalidad: lo cubre el
+   congelado**. No se toca.
+2. **DESBLOQUEADO — decidir el número de `BITACORA_PRESUPUESTO`.** Estaba EN ESPERA
+   *solo* por falta de medición, y la medición ya está. Ojo: **subirlo no arregla nada**
+   (el techo duro es el `timeout: 45` del hook en `settings.json`, y ya se roza), y
+   bajarlo solo degrada antes. La palanca real que queda sin tocar código es **cuántos
+   repos hay en el índice**, porque el coste es lineal en N. Decisión de Oscar, no mía:
+   no la tomo yo por iniciativa propia porque cambia lo que él ve al arrancar.
+3. **DESBLOQUEADO — el comentario de `MAX_LINEAS` en `bitacora.conf.example`** sigue
+   mintiendo (pendiente 1 del PC Nuevo). Allí se dejó EN ESPERA por si el arreglo bueno
+   cambiaba el número; el arreglo bueno está congelado, así que esperar a él es esperar
+   indefinidamente. Documentación falsa, y el congelado dice explícitamente que no
+   cubre corregir documentación falsa.
+
+**Qué NO congela esto:** igual que arriba — medir no está congelado, corregir
+documentación no está congelado, cambiar números locales no está congelado. Solo
+funcionalidad nueva.
+
 ## 2026-08-29 — [PC Nuevo] El .example sigue vendiendo el consejo que el 28-ago quedó desmentido; y esta máquina llevaba 10 commits sin enterarse de nada
 
 Sesión de puesta al día de esta máquina. Dos hallazgos de producto y una medición.
