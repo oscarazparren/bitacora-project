@@ -11,6 +11,93 @@ Formato: `## AAAA-MM-DD — [dispositivo] titular`
 
 ---
 
+## 2026-08-29 — [PC viejo] DOS SESIONES a la vez en este repo, y por poco escribo encima. Medido de dónde salen los 17s: la sección 0 ya no es el problema
+
+Sesión abierta en paralelo a la que hizo `36ceedc`. El hallazgo del día no es código: es que
+**`git status` limpio al arrancar era un dato correcto y caducado**, y nada avisó.
+
+### El casi-fallo, que es el mismo mecanismo de siempre
+
+Arranqué, leí la bitácora, elegí el pendiente DESBLOQUEADO (sección 0 → `estado.txt`) y
+comprobé `git status`: **limpio**. Empecé a editar el hook. El editor avisó de que el
+fichero había cambiado en disco.
+
+Comprobado en vez de deducido: el árbol tenía **84 inserciones y 97 borrados sin
+commitear** que yo no había escrito, y la sesión `bitacora-project-46` llevaba 1h abierta
+con su transcript escrito **9 segundos antes** de mi comprobación. Su transcript menciona
+`sessionstart-leer` 49 veces. Era ella.
+
+Retiré mi línea —usaba `INDICE_ESTADO` y la suya `ESTADO_REMOTO`: habrían quedado **dos
+variables de configuración para la misma ruta**, que es un fallo de verdad y silencioso.
+
+**Lo que esto enseña:** «un chat por repo» acota *dónde* trabaja UNA sesión. No dice nada
+de **dos sesiones a la vez en el mismo repo**, que es un eje tercero que no cubre ninguna
+regla. `git status` no es un cerrojo: es una foto. Van seis variantes del mismo fallo, y
+esta es la primera en que el dato caducado lo generó *otro agente nuestro*.
+
+### Los 17s, desglosados (el commit `36ceedc` los dejaba «sin explicar»)
+
+Medido con `$EPOCHREALTIME`, que es variable interna de bash y no hace fork:
+
+```
+sección 0 (índice, la recién arreglada) ....  4,82s
+sección 1 (bitácora del repo) .............  8,75s   <- aquí está
+sección 1b (carpeta) ......................  0,002s
+sección 2 (flota, no aplica aquí) .........  0,32s
+secciones 3-4 (log + JSON) ................  0,54s
+```
+
+**La sección 0 cuesta lo que debía. El problema ahora es la sección 1**, que nadie ha
+tocado. Dentro de esos 8,75s: 4,44s antes de mirar la bitácora (fetch 1,2s + git local
+0,6s + los `date` que forkean en `restante()`/`tope()`) y **4,85s en TRES llamadas a
+`entradas_recientes()`** de ~1,5s cada una.
+
+El bucle que encoge la salida hasta que cabe en `REPO_MAX_CHARS` **vuelve a partir los
+85 KB enteros de `BITACORA.md` en 31 ficheros temporales desde cero en cada iteración**.
+Es exactamente la forma de fallo que se acaba de arreglar en la sección 0 —coste lineal
+en el tamaño del dato, repetido N veces— y **empeora sola, porque la bitácora solo
+crece**. Hoy son 4,85s de 15s.
+
+### Un error mío por el camino, que se anota porque es el de siempre
+
+La primera medición la hice con `PS4='+ $(date +%s%3N) '` y `bash -x`. Salían builtins
+como `[ -f ... ]` tardando 2,4s, que es imposible: **el `PS4` lanzaba un `date` por cada
+una de las 376 líneas trazadas, así que medía mi propia instrumentación.** La descarté
+entera y repetí con `$EPOCHREALTIME`. Es el mismo fallo fichado el 29-ago («teoricé una
+causa en vez de pedir la salida»), en versión instrumento: **un número que sale de una
+medición mal montada tiene el mismo tono de dato que uno bueno.**
+
+### Arreglado (y qué no)
+
+1. **`bitacora.conf.example`: `BITACORA_ESTADO_REMOTO` no estaba documentada.** El hook la
+   usa desde `36ceedc`; quien clone el repo no puede descubrirla. Documentada, con el
+   arranque en frío y el aviso de que el índice necesita las dos mitades.
+2. **El comentario de `MAX_LINEAS` deja de mentir.** Llevaba desde el 28-ago diciendo que
+   la bitácora de flota «puede ser corta sin coste», que es justo lo que costó el doble
+   diagnóstico del operator. Puesto el 80 medido y explicado por qué. Pendiente
+   DESBLOQUEADO desde el 28-ago: cerrado.
+3. **`receptor-webhook.py` reingería su propia cabecera.** `# nombre` pasaba el filtro
+   (3 campos, primero no vacío) y entraba como un repo; luego se escribía otra cabecera
+   encima. Visto en vivo: dos cabeceras y una fila basura permanente. Arreglado y probado
+   contra el fichero real; se cura solo en el siguiente push. **NO DESPLEGADO todavía.**
+4. **`estado.txt` se escribía 0600**, así que solo funcionaba porque el cliente entra por
+   SSH como root. Dependencia oculta: puesto `os.chmod(tmp, 0o644)`. **Sin verificar**: la
+   prueba corrió en Windows, donde `os.chmod` no honra modos POSIX. Se comprueba al
+   desplegar.
+
+### Pendientes
+
+1. **DESBLOQUEADO — desplegar el receptor arreglado** en LIZAR-1 y verificar allí el 0644
+   y que la fila basura desaparece. Es producción: lo autoriza Oscar.
+2. **DESBLOQUEADO — `repo-de-prueba` sigue en `estado.txt`**, resto de las pruebas de
+   ayer. No se ve en el índice (el cliente recorre `repos.txt`, no `estado.txt`), pero es
+   dato falso en un fichero de estado. Quitarlo al desplegar.
+3. **DESBLOQUEADO — que `entradas_recientes()` parta la bitácora UNA vez** en lugar de una
+   por iteración del bucle. Medido arriba: 4,85s de los 15s, y creciendo con el fichero.
+   No lo toco en esta sesión para no volver a chocar con la otra en el mismo fichero.
+4. **EN ESPERA — cortar la bitácora de flota por ENTRADAS enteras** en vez de por líneas.
+   Sigue abierto desde el 29-ago; el 80 de `MAX_LINEAS` es un parche que aún parte frases.
+
 ## 2026-08-29 — [PC viejo] La sección 0 ya lee estado.txt: 17s/25s con 40 repos, y el coste deja de crecer
 
 Cierra el círculo de todo el día. **Con 40 repos vigilados el arranque va a 17s dentro

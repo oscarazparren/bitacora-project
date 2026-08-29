@@ -31,3 +31,7 @@ bitacora-dossier*.txt
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# Python (servidor/)
+__pycache__/
+*.pyc

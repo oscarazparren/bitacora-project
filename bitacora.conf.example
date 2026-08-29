@@ -16,10 +16,27 @@ BITACORA_FICHERO="BITACORA.md"
 # no recuperación por relevancia — eso sigue pendiente, ver README.
 BITACORA_MAX_ENTRADAS=5
 
-# Cuántas líneas de la bitácora de FLOTA (infraestructura, fuera de cualquier
-# repo) se inyectan. Esta sí puede ser corta sin coste: solo dice DÓNDE mirar,
-# no el porqué, así que no sufre igual el truncado por líneas.
-BITACORA_MAX_LINEAS=40
+# Cuántas líneas de la bitácora de FLOTA (infraestructura, fuera de cualquier repo)
+# se inyectan.
+#
+# AQUÍ ANTES PONÍA que "esta sí puede ser corta sin coste: solo dice DÓNDE mirar, no
+# el porqué". Es FALSO y salió caro. El 28-ago-2026 una máquina re-diagnosticó desde
+# cero una avería que la otra ya había diagnosticado y anotado esa misma mañana: la
+# entrada caía fuera del corte de 40 líneas. Dos diagnósticos, dos facturas. El corte
+# no se nota — se lee una bitácora incompleta creyéndola entera.
+#
+# Medido el 29-ago-2026 contra una bitácora de flota real:
+#    40 líneas = 2.486 chars ->  2 entradas (la 2ª cortada a mitad de frase)
+#    80 líneas = 4.957 chars ->  3 entradas
+#   120 líneas = 7.333 chars ->  4 entradas, pero sumado a la sección de repo (6.000)
+#                                se pasa de BITACORA_MAX_CHARS_TOTAL=10000 y Claude
+#                                Code DESCARTA LA INYECCIÓN ENTERA, sin avisar.
+#
+# O sea que el techo no es estético: pasarse cuesta el envío completo. 80 es el mayor
+# valor con margen. Sigue siendo un parche —corta por LÍNEAS, así que puede partir una
+# entrada a mitad de frase—; el arreglo bueno es cortar por ENTRADAS enteras, como ya
+# hace la sección del repo.
+BITACORA_MAX_LINEAS=80
 
 # Carpetas donde el hook no crea nada y calla si no hay bitácora ya.
 # OJO: no excluir "*/repos/*" a secas — si guardas ahí tus proyectos activos (no
@@ -52,6 +69,25 @@ BITACORA_FLOTA_REPOS=""
 # Ruta remota, en el servidor de BITACORA_FLOTA_SSH, a la lista de repos vigilados:
 # un "nombre url-https" por línea, líneas '#' se ignoran.
 BITACORA_INDICE_REPOS=""
+
+# Ruta remota, en ese mismo servidor, al estado que mantiene el receptor de webhooks
+# (servidor/receptor-webhook.py): un "nombre<TAB>sha<TAB>fecha" por línea.
+#
+# ESTE FICHERO ES AHORA LA FUENTE DEL ÍNDICE, y por eso el índice cuesta lo mismo con
+# 10 repos que con 200. Hasta el 29-ago-2026 cada cliente preguntaba a GitHub un
+# 'git ls-remote' POR REPO: ~4 s cada uno en Windows, coste LINEAL. Con 10 repos eran
+# 45 s; al pasar a 40 habrían sido ~160 s, y el hook moría por timeout sin entregar
+# nada. Ahora el trabajo lo hace el servidor una vez para toda la flota y el cliente
+# solo lee el resultado en UNA llamada SSH.
+#
+# ARRANQUE EN FRÍO: los webhooks solo avisan de pushes FUTUROS, así que este fichero
+# empieza vacío y se llena según se va tocando cada repo. Un repo que todavía no
+# aparece se informa como "SIN DATOS TODAVÍA", nunca como "sin cambios" — decir "sin
+# cambios" sin saberlo es el fallo silencioso que este proyecto persigue.
+#
+# Si montas el índice SIN el receptor de webhooks, no habrá estado que leer y todos
+# los repos saldrán como "sin datos". El índice necesita las dos mitades.
+BITACORA_ESTADO_REMOTO="/opt/bitacora/estado/estado.txt"
 
 # Techo duro de entradas por repo que muestra la sección 1, aunque la fecha de la
 # última visita a ese repo (que da el índice) permita más. Cubre el caso de volver

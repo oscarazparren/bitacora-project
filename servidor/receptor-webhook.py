@@ -91,6 +91,15 @@ def actualizar_estado(repo, sha):
     try:
         with open(ESTADO, "r", encoding="utf-8") as f:
             for linea in f:
+                # Saltar la cabecera. Sin esto se reingería a sí misma: "# nombre" pasaba
+                # el filtro de abajo (tiene 3 campos y el primero no está vacío), entraba
+                # en el diccionario como si fuera un repo llamado "# nombre", y al
+                # reescribir se le ponía OTRA cabecera encima. Resultado, visto en vivo el
+                # 29-ago-2026 en el servidor: dos cabeceras y una fila basura permanente.
+                # No crecía sin límite —está indexada por clave— pero cualquier cliente
+                # que no saltara los '#' la habría leído como un repo más.
+                if linea.startswith("#"):
+                    continue
                 partes = linea.rstrip("\n").split("\t")
                 if len(partes) >= 2 and partes[0]:
                     filas[partes[0]] = partes[1:]
@@ -106,6 +115,13 @@ def actualizar_estado(repo, sha):
             f.write("# nombre\tsha\tvisto-utc — lo escribe receptor-webhook.py\n")
             for nombre in sorted(filas):
                 f.write("\t".join([nombre] + filas[nombre]) + "\n")
+        # mkstemp crea con 0600 y os.replace conserva el modo del temporal, así que sin
+        # esto el fichero solo lo puede leer el usuario 'bitacora'. Funcionaba de milagro:
+        # el cliente entra por SSH como root, que lee igual. Esa es una dependencia oculta
+        # —el día que alguien entre con otro usuario, el índice se queda sin datos y no
+        # sabría por qué—. Aquí no hay nada secreto: nombres de repo y SHA públicos para
+        # quien ya tiene acceso al repo. El secreto de firma vive en otro fichero.
+        os.chmod(tmp, 0o644)
         os.replace(tmp, ESTADO)
     except Exception:
         os.unlink(tmp)
