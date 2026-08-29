@@ -60,12 +60,11 @@ crece**. Hoy son 4,85s de 15s.
 
 ### Un error mío por el camino, que se anota porque es el de siempre
 
-La primera medición la hice con `PS4='+ $(date +%s%3N) '` y `bash -x`. Salían builtins
-como `[ -f ... ]` tardando 2,4s, que es imposible: **el `PS4` lanzaba un `date` por cada
-una de las 376 líneas trazadas, así que medía mi propia instrumentación.** La descarté
-entera y repetí con `$EPOCHREALTIME`. Es el mismo fallo fichado el 29-ago («teoricé una
-causa en vez de pedir la salida»), en versión instrumento: **un número que sale de una
-medición mal montada tiene el mismo tono de dato que uno bueno.**
+La primera medición usaba `PS4='+ $(date +%s%3N) '` con `bash -x`. Salían builtins como
+`[ -f … ]` tardando 2,4s, que es imposible: **el `PS4` lanzaba un `date` por cada una de
+las 376 líneas trazadas, así que medía mi propia instrumentación.** Descartada entera y
+repetida con `$EPOCHREALTIME`. Versión-instrumento del fallo de siempre: **un número
+salido de una medición mal montada tiene el mismo tono de dato que uno bueno.**
 
 ### Arreglado (y qué no)
 
@@ -86,59 +85,42 @@ medición mal montada tiene el mismo tono de dato que uno bueno.**
 
 ### Desplegado en LIZAR-1, con la verificación hecha allí
 
-Autorizado por Oscar. Copia de seguridad previa en `/root/receptor-webhook.py.bak-
-20260829-154447`, md5 comparado a los dos lados (`fdc54350…`, idéntico) y sintaxis
-validada con el `python3` del propio servidor antes de instalar nada.
-
-Comprobado **después** del reinicio, mandando un aviso firmado desde dentro del servidor
-con el mismo repo y el mismo SHA que ya figuraban —idempotente, no falsea ningún dato—
-solo para disparar la reescritura:
+Autorizado por Oscar. Copia previa en `/root/receptor-webhook.py.bak-20260829-154447`,
+md5 comparado a los dos lados y sintaxis validada con el `python3` del servidor antes de
+instalar. Comprobado **después** del reinicio, con un aviso firmado desde dentro del
+servidor usando el mismo repo y SHA que ya figuraban (idempotente, no falsea dato):
 
 ```
-antes:  2 cabeceras + fila basura + repo-de-prueba   -rw------- (0600)
-después: 1 cabecera + 1 fila real                    -rw-r--r-- (0644)
+antes:   2 cabeceras + fila basura + repo-de-prueba   -rw------- (0600)
+después: 1 cabecera  + 1 fila real                    -rw-r--r-- (0644)
 ```
 
-El 0644 es justo lo que la prueba en Windows NO pudo verificar (`os.chmod` allí solo
-entiende el bit de solo-lectura). Se dijo que quedaba sin verificar, y aquí queda
-verificado. Servicio `active`, journal limpio.
+El 0644 es justo lo que la prueba en Windows NO podía verificar. Se dijo que quedaba sin
+verificar; ahora lo está.
 
-**De regalo, la confirmación de que el circuito entero funciona solo:** el push de
-`ccd328e` de esta misma sesión llegó al servidor por webhook sin que nadie lanzara nada
-(`bitacora-project ccd328e… 10:28:40 UTC`, la misma hora a la que se hizo el push).
+**El circuito funciona solo:** el push de `ccd328e` de esta sesión llegó al servidor por
+webhook sin lanzar nada, a la misma hora a la que se hizo.
 
-*(Un susto por el camino: el receptor escribió `13:45 UTC` cuando poco antes marcaba
-`10:28 UTC`, y pareció desfase de relojes. Comprobado en vez de supuesto: PC 15:46:10,
-servidor 15:46:13, ambos CEST y sincronizados por NTP. No había desfase — eran tres horas
-de reloj real esperando la autorización para desplegar. Mirarlo costó una orden.)*
-
-### Y arreglado también, al final de la sesión: la sección 1 baja a la mitad
+### Y arreglado al final: la sección 1 baja a la mitad
 
 Con la otra sesión 3h 30m en silencio y el árbol limpio, se pudo tocar el hook sin chocar.
+`entradas_recientes()` parte ahora el fichero **una vez** y lo recuerda (`partir_una_vez`).
 
-`entradas_recientes()` ahora parte la bitácora **una sola vez por fichero** y lo recuerda
-(`partir_una_vez()`), en vez de rehacerlo en cada vuelta del bucle que baja el techo.
-
-Y el hallazgo de verdad: **el culpable no era el `awk`, que cuesta 0,3s.** Era el enjambre
-de procesos de alrededor —`mktemp`, `find`, `wc`, `tr`, `ls`, `sort`, un `cat` POR ENTRADA
-y `rm`— repetido entero en cada llamada. Así que además de partir una vez se quitaron
-casi todos:
-
-- ordenar lo hace el **glob de bash** (los nombres llevan `%05d` delante, así que el orden
-  alfabético ES el numérico) → fuera `ls` y `sort`
-- contar es **el tamaño de un array** → fuera `find`, `wc` y `tr`
-- leer una entrada es **`$(<fichero)`**, redirección interna de bash → fuera `cat`
-
-`entradas_recientes()` no lanza ya ni un proceso externo.
+El hallazgo de verdad: **el culpable no era el `awk`, que cuesta 0,3s.** Era el enjambre de
+procesos de alrededor —`mktemp`, `find`, `wc`, `tr`, `ls`, `sort`, un `cat` POR ENTRADA y
+`rm`— repetido entero en cada llamada. Se quitaron casi todos: ordenar lo hace el glob de
+bash (nombres con `%05d`, orden alfabético = numérico), contar es el tamaño de un array, y
+leer una entrada es `$(<fichero)`, redirección interna. **`entradas_recientes()` ya no
+lanza ni un proceso externo.**
 
 ```
-sección 1:  8,75s  ->  4,55s
-hook entero: 15,7s ->  12,7s   (dos pasadas: 15,7/14,5 antes, 12,7/11,4 después)
+sección 1:   8,75s -> 4,55s
+hook entero: 15,7s -> 12,7s   (antes 15,7/14,5, después 12,7/11,4)
 ```
 
-**Verificado que no cambia nada más:** las dos versiones, arrancadas desde el mismo estado
-de marcadores, dan **8.499 bytes idénticos byte a byte** (`cmp`). Se comprobó antes de
-mirar el reloj, porque un arreglo rápido que cambia la salida no es un arreglo.
+**Verificado que no cambia nada más:** las dos versiones, desde el mismo estado de
+marcadores, dan **8.499 bytes idénticos byte a byte** (`cmp`). Se comprobó antes de mirar
+el reloj: un arreglo rápido que cambia la salida no es un arreglo.
 
 ### Pendientes
 
