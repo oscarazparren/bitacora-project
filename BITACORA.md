@@ -11,6 +11,51 @@ Formato: `## AAAA-MM-DD — [dispositivo] titular`
 
 ---
 
+## 2026-08-29 — [PC viejo] La sección 0 ya lee estado.txt: 17s/25s con 40 repos, y el coste deja de crecer
+
+Cierra el círculo de todo el día. **Con 40 repos vigilados el arranque va a 17s dentro
+de un presupuesto de 25 y marca `ok`.** Con el código anterior habrían sido ~160s y no
+habría entregado nada — de hecho no los entregó: rompió el arranque de un chat nuevo.
+
+### El diseño lo simplificó Oscar, y esa es la razón de que sea barato
+
+Su corrección: el índice no tiene que decir QUÉ se movió ni cuánto, solo EN QUÉ REPOS.
+Si vas a trabajar en uno, entras y lees su bitácora allí. Eso permitió tirar el
+`git fetch` + `rev-list --count` que daba el detalle — que era justo la parte que
+reventó el plazo el 28-ago. **La sección no hace ya ni una sola llamada a git.**
+
+### El error de en medio, que es el mismo peaje de siempre
+
+Primera versión: una llamada SSH en vez de 40 `ls-remote`, y aun así **41s**. El bucle
+hacía dos `awk` por repo — 80 procesos — y en Git Bash sobre Windows crear un proceso
+cuesta ~0,4s. **Cambié red por subprocesos y no arreglé nada.** El peaje no era la red:
+era crear procesos, lo mismo que descubrimos por la mañana con `ls-remote`.
+
+Arreglado con UNA pasada de `awk` sobre los tres orígenes (estado del servidor, marcador
+local, lista de vigilados), marcados con una letra por línea. `ruta_local` solo se llama
+para los repos que han cambiado, no para los 40.
+
+**La lección: que algo deje de tocar la red no lo hace constante. Lo que tiene que ser
+constante es el número de PROCESOS.**
+
+### Arranque en frío, comportándose como se diseñó
+
+Sale «SIN DATOS TODAVÍA en 39 repo(s)», no «sin cambios». Los webhooks solo avisan de
+pushes futuros, así que hasta que cada repo reciba el suyo no se sabe nada de él — y
+decirlo así, en vez de callarlo, es justo lo contrario del fallo silencioso que este
+repo persigue desde hace un mes. Se irá vaciando solo.
+
+### Pendientes
+
+1. **DESBLOQUEADO — averiguar los 17s.** La sección 0 es ahora una llamada SSH y la de
+   flota otra: deberían ser ~4s, no 17. Queda tiempo sin explicar en el resto del script.
+   No es urgente (entra en presupuesto y marca `ok`) pero está sin medir, y este repo ya
+   sabe cómo acaban las cosas sin medir.
+2. **EN ESPERA — la GitHub App** sobre «All repositories», para no tener que relanzar el
+   sincronizador con cada repo nuevo.
+3. **HECHO hoy y verificado**: receptor de webhooks, 40 repos avisando, hook de contexto
+   restaurado, sincronizador idempotente, y esta sección 0.
+
 ## 2026-08-29 — [PC viejo] Los 42 repos avisan (40 vivos + 2 archivados que no aplican). Y el fallo lo vio Oscar, no el sistema
 
 Cierre de la vía sin token. **Estado final verificado: 40 de 40 repos vivos con webhook,

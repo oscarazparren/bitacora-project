@@ -204,120 +204,106 @@ usa_flota() {
 }
 
 # ---------- 0. Índice de cambios ----------
-# Contesta una pregunta distinta de la de la sección 1: no POR QUÉ se hizo algo, sino
-# EN QUÉ repos vigilados se ha movido algo desde la última vez que ESTA máquina miró.
-# No lo escribe nadie: se deriva de 'git ls-remote', así que no puede mentir por
-# olvido ni si una sesión anterior murió de mala manera. Necesita FLOTA_SSH e
-# INDICE_REPOS configurados; si falta cualquiera, esta sección no hace nada (no es
-# un fallo, es la sección desactivada).
+# Contesta UNA pregunta y solo una: ¿en qué repos vigilados se ha movido algo desde la
+# última vez que esta máquina miró? Nombres. No cuántos commits, no si tocaron la
+# bitácora. Si vas a trabajar en uno de ellos, entras y lo lees allí, que es donde está
+# el porqué. Diseño de Oscar, 29-ago-2026, y es el que hace barato todo esto.
+#
+# CÓMO ERA HASTA HOY. Se preguntaba a GitHub UNA VEZ POR REPO (git ls-remote) y, para
+# los que habían cambiado, se hacía además un git fetch para contar commits. Medido:
+# ~4s por repo en Windows, coste LINEAL. 45s con 10 repos, ~160s con 40 -- o sea que
+# ampliar el catálogo rompía el arranque, y el 29-ago lo rompió de verdad.
+#
+# CÓMO ES AHORA. El trabajo lo hace el servidor: los webhooks de GitHub le avisan de
+# cada push y mantiene estado.txt (nombre -> SHA). Aquí se lee ese fichero en UNA
+# llamada y se compara con el marcador local. Coste CONSTANTE: igual con 10 que con 200.
+# No queda ni una llamada a git en esta sección; el detalle caro se eliminó a propósito.
 VISTO_ANTES=""
-LISTA=""
 if [ -n "$FLOTA_SSH" ] && [ -n "$INDICE_REPOS" ]; then
-  if hay_tiempo 10; then
-    LISTA=$(timeout "$(tope 10)" ssh -o ConnectTimeout=5 -o BatchMode=yes "$FLOTA_SSH" "cat '$INDICE_REPOS'" 2>/dev/null || true)
-    [ -z "$LISTA" ] && saltado "índice de cambios: el servidor de flota no respondió a tiempo"
+  ESTADO_REMOTO="${BITACORA_ESTADO_REMOTO:-/opt/bitacora/estado/estado.txt}"
+  DATOS=""
+  if hay_tiempo 8; then
+    # Los dos ficheros en UNA sola conexión: la lista de vigilados y el estado que
+    # mantienen los webhooks. Se separan por una marca y se parten aquí.
+    DATOS=$(timeout "$(tope 12)" ssh -o ConnectTimeout=5 -o BatchMode=yes "$FLOTA_SSH"       "cat '$INDICE_REPOS'; echo '###ESTADO###'; cat '$ESTADO_REMOTO' 2>/dev/null" 2>/dev/null || true)
+    [ -z "$DATOS" ] && saltado "índice de cambios: el servidor de flota no respondió a tiempo"
   else
     saltado "índice de cambios: sin presupuesto de tiempo para consultarlo"
   fi
 
-  if [ -n "$LISTA" ]; then
-    # Snapshot del marcador ANTES de sobreescribirlo: la sección 1 lo necesita para
-    # saber la fecha de la última visita a SU repo, y para entonces ya estaría pisado.
+  if [ -n "$DATOS" ]; then
+    # Snapshot del marcador ANTES de pisarlo: la sección 1 necesita la fecha de la
+    # última visita a SU repo, y para entonces ya estaría sobreescrito.
     VISTO_ANTES="$HOME/.claude/.bitacora-visto-antes-de-esta-sesion"
     if [ -f "$VISTO" ]; then cp "$VISTO" "$VISTO_ANTES"; else rm -f "$VISTO_ANTES" 2>/dev/null; fi
 
-    TMP=$(mktemp -d 2>/dev/null || { mkdir -p "/tmp/indice.$$"; echo "/tmp/indice.$$"; })
-
-    # Preguntar a cada remoto en paralelo: solo la punta, sin clonar nada.
-    # Van en paralelo, así que la etapa entera cuesta lo que el más lento: se le
-    # da el presupuesto que quede, guardando 8 s para lo que viene detrás.
-    TOPE_LS=$(( $(restante) - 8 ))
-    [ "$TOPE_LS" -gt 15 ] && TOPE_LS=15
-    [ "$TOPE_LS" -lt 3 ] && TOPE_LS=3
-    while read -r NOMBRE URL _; do
-      case "${NOMBRE:-#}" in ''|'#'*) continue ;; esac
-      [ -z "${URL:-}" ] && continue
-      (
-        SHA=$(GIT_TERMINAL_PROMPT=0 timeout "$TOPE_LS" git ls-remote "$URL" HEAD 2>/dev/null | cut -f1)
-        printf '%s\n' "${SHA:-ERROR}" > "$TMP/$NOMBRE"
-      ) &
-    done <<< "$LISTA"
-    wait
+    TMPD=$(mktemp -d 2>/dev/null || { mkdir -p "/tmp/bitacora.$$"; echo "/tmp/bitacora.$$"; })
 
     PRIMERA=no
     [ -f "$VISTO" ] || PRIMERA=si
 
+    # TODO en un fichero, con una letra por delante que dice de dónde sale cada línea:
+    # E=estado del servidor, V=lo que vi la última vez, L=lista de vigilados.
+    { printf '%s
+' "$DATOS" | sed -n '/^###ESTADO###$/,$p' | sed '1d' | sed 's/^/E /'
+      [ -f "$VISTO" ] && sed 's/^/V /' "$VISTO"
+      printf '%s
+' "$DATOS" | sed -n '1,/^###ESTADO###$/p' | sed '$d' | sed 's/^/L /'
+    } > "$TMPD/todo" 2>/dev/null
+
+    # UNA sola pasada de awk. La versión anterior de esto era un bucle de shell con dos
+    # awk POR REPO: 80 procesos con 40 repos. En Git Bash sobre Windows crear un proceso
+    # cuesta ~0,4s, así que eran ~32s -- exactamente el mismo peaje de proceso que hacía
+    # lenta la versión con ls-remote. Se puede cambiar la red por subprocesos y no haber
+    # arreglado nada; pasó, y se midió (41s). El coste tiene que ser CONSTANTE en el
+    # número de repos, no solo dejar de tocar la red.
+    awk -v primera="$PRIMERA" '
+      $1=="E" { est[$2]=$3; next }
+      $1=="V" { ant[$2]=$3; next }
+      $1!="L" { next }
+      { sub(/^L[ 	]+/, "") }
+      /^[[:space:]]*#/ || NF==0 { next }
+      {
+        n=$1
+        if (!(n in est)) { print "SINDATOS " n; next }
+        print "MARCA " n " " est[n]
+        if (primera != "si" && est[n] != ant[n]) print "CAMBIADO " n
+      }
+    ' "$TMPD/todo" > "$TMPD/salida" 2>/dev/null
+
+    NUEVO_VISTO="$TMPD/visto.nuevo"
+    grep '^MARCA ' "$TMPD/salida" 2>/dev/null | awk '{print $2"	"$3}' > "$NUEVO_VISTO"
+
     CAMBIADOS=""
-    IGUALES=""
-    FALLIDOS=""
-    NUEVO_VISTO="$TMP/visto.nuevo"
-    : > "$NUEVO_VISTO"
-
-    while read -r NOMBRE URL _; do
-      case "${NOMBRE:-#}" in ''|'#'*) continue ;; esac
-      [ -z "${URL:-}" ] && continue
-      AHORA=$(cat "$TMP/$NOMBRE" 2>/dev/null || echo ERROR)
-      ANTES=$(awk -v n="$NOMBRE" '$1==n {print $2; exit}' "$VISTO" 2>/dev/null || true)
-
-      # Si no se pudo consultar, se calla el cambio pero NO el fallo: se avisa y se
-      # conserva el marcador viejo, para no dar por visto lo que no se vio.
-      if [ "$AHORA" = "ERROR" ] || [ -z "$AHORA" ]; then
-        FALLIDOS="$FALLIDOS $NOMBRE"
-        [ -n "${ANTES:-}" ] && printf '%s\t%s\n' "$NOMBRE" "$ANTES" >> "$NUEVO_VISTO"
-        continue
-      fi
-
-      printf '%s\t%s\n' "$NOMBRE" "$AHORA" >> "$NUEVO_VISTO"
-      [ "$PRIMERA" = "si" ] && continue
-
-      if [ "$AHORA" = "${ANTES:-}" ]; then
-        IGUALES="$IGUALES $NOMBRE"
-        continue
-      fi
-
-      DETALLE="ha cambiado"
+    SIN_DATOS=""
+    # Solo se recorren los que HAN cambiado, que son pocos; ruta_local no se llama 40
+    # veces sino una por repo movido.
+    for NOMBRE in $(grep '^CAMBIADO ' "$TMPD/salida" 2>/dev/null | awk '{print $2}'); do
       P=$(ruta_local "$NOMBRE")
-      if [ -n "$P" ] && [ -n "${ANTES:-}" ]; then
-        # ESTE es el fetch que reventaba el plazo: en serie, una vez por repo
-        # cambiado. Ahora solo se hace si queda presupuesto. Sin él se sigue
-        # intentando el rev-list -- si los objetos ya están en local, funciona
-        # igual; y si no, el repo se anuncia como cambiado sin el detalle, que
-        # es justo la degradación que se quiere.
-        if hay_tiempo 8; then
-          timeout "$(tope 20)" git -C "$P" fetch -q --prune 2>/dev/null
-        else
-          saltado "detalle de commits de $NOMBRE (no dio tiempo al fetch; el repo SÍ ha cambiado)"
-        fi
-        N=$(git -C "$P" rev-list --count "$ANTES..$AHORA" 2>/dev/null || true)
-        if [ -n "$N" ] && [ "$N" != "0" ]; then
-          DETALLE="$N commit(s) nuevo(s)"
-          if git -C "$P" diff --name-only "$ANTES" "$AHORA" -- "$FICHERO" 2>/dev/null | grep -q .; then
-            DETALLE="$DETALLE, $FICHERO ACTUALIZADA"
-          fi
-        fi
-      fi
-      [ -n "$P" ] && DETALLE="$DETALLE  ->  $P" || DETALLE="$DETALLE  (sin clonar en esta máquina)"
-      CAMBIADOS="${CAMBIADOS}  ${NOMBRE}: ${DETALLE}
+      if [ -n "$P" ]; then
+        CAMBIADOS="${CAMBIADOS}  ${NOMBRE}  ->  ${P}
 "
-    done <<< "$LISTA"
+      else
+        CAMBIADOS="${CAMBIADOS}  ${NOMBRE}  ->  NO CLONADO AQUÍ (clónalo antes de trabajar en él)
+"
+      fi
+    done
+    SIN_DATOS=$(grep -c '^SINDATOS ' "$TMPD/salida" 2>/dev/null || echo 0)
 
     FECHA_ANT=$(awk 'NR==1 {print $3, $4}' "$VISTO" 2>/dev/null || true)
 
     if [ "$PRIMERA" = "si" ]; then
       SALIDA="${SALIDA}=== ÍNDICE DE CAMBIOS: primera vez en esta máquina ===
-No había marcador previo, así que se ha anotado el estado actual de los repos. A partir
-de la próxima sesión, aquí saldrá qué se ha movido desde la última vez.
+No había marcador previo, así que se ha anotado el estado actual. A partir de la próxima
+sesión, aquí saldrá qué se ha movido desde la última vez.
 
 "
     elif [ -n "$CAMBIADOS" ]; then
-      SALIDA="${SALIDA}=== SE HA MOVIDO ALGO DESDE TU ÚLTIMA SESIÓN EN ESTA MÁQUINA${FECHA_ANT:+ ($FECHA_ANT)} ===
+      SALIDA="${SALIDA}=== SE HA MOVIDO ALGO EN ESTOS REPOS${FECHA_ANT:+ (desde $FECHA_ANT)} ===
 $CAMBIADOS
-Esto dice DÓNDE, no POR QUÉ. Antes de tocar cualquiera de esos repos, entra y lee su
-$FICHERO: el detalle y lo que se descartó están ahí, no en los commits.
-"
-      [ -n "$IGUALES" ] && SALIDA="${SALIDA}Sin cambios:$IGUALES
-"
-      SALIDA="$SALIDA
+Esto dice DÓNDE, no POR QUÉ ni cuánto. Si vas a trabajar en uno, entra y lee su
+$FICHERO: el detalle y lo que se descartó están ahí, no aquí.
+
 "
     else
       SALIDA="${SALIDA}=== ÍNDICE DE CAMBIOS${FECHA_ANT:+ (desde $FECHA_ANT)} ===
@@ -326,21 +312,21 @@ Sin movimiento en ninguno de los repos vigilados.
 "
     fi
 
-    if [ -n "$FALLIDOS" ]; then
-      SALIDA="${SALIDA}AVISO: no se pudo consultar$FALLIDOS (red o permisos). Su marcador se
-deja como estaba: puede haber cambios ahí que este índice NO está viendo.
+    # Se avisa, y se distingue de "sin cambios". Es normal justo después de montar los
+    # webhooks e irá desapareciendo según se toque cada repo.
+    if [ "${SIN_DATOS:-0}" -gt 0 ] 2>/dev/null; then
+      SALIDA="${SALIDA}SIN DATOS TODAVÍA en $SIN_DATOS repo(s): el servidor aún no ha recibido ningún aviso suyo
+desde que se montaron los webhooks. NO quiere decir que no hayan cambiado, quiere decir
+que de esos no se sabe. Se irá llenando solo con el primer push de cada uno.
 
 "
     fi
 
-    # El marcador se actualiza AHORA, al leerlo, no al cerrar la sesión: así no
-    # depende de que la sesión termine bien. Un aviso que solo se guarda al cerrar
-    # se pierde si la sesión muere de mala manera.
     if [ -s "$NUEVO_VISTO" ]; then
       HOY=$(date '+%Y-%m-%d %H:%M')
-      awk -v f="$HOY" '{print $1"\t"$2"\t"f}' "$NUEVO_VISTO" > "$VISTO.tmp" && mv "$VISTO.tmp" "$VISTO"
+      awk -v f="$HOY" '{print $1"	"$2"	"f}' "$NUEVO_VISTO" > "$VISTO.tmp" && mv "$VISTO.tmp" "$VISTO"
     fi
-    rm -rf "$TMP"
+    rm -rf "$TMPD"
   fi
 fi
 
