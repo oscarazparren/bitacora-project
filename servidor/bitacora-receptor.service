@@ -1,0 +1,34 @@
+[Unit]
+Description=Bitacora - receptor de webhooks de GitHub
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /opt/bitacora/receptor-webhook.py
+Restart=always
+RestartSec=5
+
+# El servicio no necesita ser root: solo lee el secreto y escribe estado.txt. Se le
+# da su propio usuario de sistema para que, si alguien encuentra un fallo en el
+# receptor, no herede la maquina entera -- que en este servidor es el negocio.
+User=bitacora
+Group=bitacora
+
+# Endurecido: lo unico que puede escribir es su propio directorio de estado. NO se le
+# da /opt/bitacora entero a proposito: ahi vive BITACORA.md, y un receptor que escucha
+# de internet no tiene por que poder tocar la bitacora de la flota.
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/opt/bitacora/estado
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+
+[Install]
+WantedBy=multi-user.target

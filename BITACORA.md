@@ -11,6 +11,52 @@ Formato: `## AAAA-MM-DD — [dispositivo] titular`
 
 ---
 
+## 2026-08-29 — [PC viejo] CONSTRUIDA la vía sin token: receptor de webhooks vivo en LIZAR-1. Falta el último paso, que lo tiene que autorizar Oscar
+
+Oscar eligió la vía de webhooks y levantó el congelado para esto. **La mitad del
+servidor está hecha, probada y en marcha; el paso que sale hacia fuera está parado.**
+
+### Hecho y verificado
+
+1. **`servidor/receptor-webhook.py`** (nuevo en el repo, desplegado en
+   `/opt/bitacora/receptor-webhook.py`). Escucha en `127.0.0.1:8011`, verifica la firma
+   HMAC-SHA256 de GitHub, y ante un `push` escribe `nombre → SHA` en
+   `/opt/bitacora/estado/estado.txt`. Escritura atómica (temporal + `os.replace`), que
+   importa porque el lector es un `cat` por SSH que puede caer en cualquier momento.
+2. **`servidor/bitacora-receptor.service`** (nuevo). Corre como usuario de sistema
+   `bitacora`, NO como root, y con `ProtectSystem=strict`. Lo único que puede escribir
+   es `/opt/bitacora/estado`: **no se le dio `/opt/bitacora` entero a propósito**, para
+   que un proceso que escucha de internet no pueda tocar `BITACORA.md`.
+3. **Secreto de firma** generado en el servidor (`openssl rand -hex 32`),
+   `root:bitacora 640`. No ha salido de la máquina más que para registrarlo en GitHub.
+4. **nginx**: `location /gh-bitacora/` añadido al bloque de `n8n.lizaraia.com` (elección
+   de Oscar: sin DNS ni certificado nuevos). Copia de seguridad previa en
+   `/root/lizar-paneles.bak-20260829-104513`, `nginx -t` antes de recargar.
+
+**Probado, no supuesto:** firma inválida → 401; sin firma → 401; `ping` con firma
+válida → `pong`; `push` con firma válida → `estado.txt` escrito correctamente. Y tras
+recargar nginx: `n8n.lizaraia.com` 200, `panel.lizaraia.com` 307, `lizaraia.com` 200 —
+o sea, no se rompió nada de lo que ya servía. El endpoint responde desde fuera con TLS.
+
+### Parado, y por qué
+
+Crear los 10 webhooks en los repos de GitHub **lo bloqueó el clasificador de auto mode**,
+y hace bien: es la única acción que modifica configuración persistente fuera de esta
+máquina. Queda para que lo autorice Oscar. Sin ese paso `estado.txt` no se llena, así
+que **el hook cliente NO se ha tocado todavía**: cambiarlo ahora degradaría el índice a
+«sin datos» y rompería algo que hoy funciona, aunque sea lento.
+
+### Pendientes
+
+1. **DESBLOQUEADO — crear los 10 webhooks** (comando ya preparado, lo lanza Oscar).
+2. **EN ESPERA hasta el punto 1 — cambiar la sección 0 del hook** para leer
+   `estado.txt` en UNA llamada SSH en vez de 10 `ls-remote`. Es el cambio que convierte
+   el arranque de ~45s en ~2s y de coste lineal a constante.
+3. **EN ESPERA — que un repo sin datos en `estado.txt` se informe como «sin datos
+   todavía», nunca como «sin cambios».** Está así en el diseño del receptor y hay que
+   respetarlo en el cliente: decir «sin cambios» sin saberlo es exactamente el fallo
+   silencioso que este repo lleva un mes persiguiendo.
+
 ## 2026-08-29 — [PC viejo] El token del servidor: qué es LIZAR-1 de verdad, y por qué el riesgo no es «que nos entren»
 
 Análisis para decidir el punto 2 de la entrada de abajo. Datos del servidor medidos hoy,
@@ -186,10 +232,14 @@ sobre Windows el `&` no compra concurrencia real cuando cada hijo abre su propia
 conexión TLS a GitHub: lo que domina es crear el proceso y el handshake, y eso se
 serializa solo.
 
-Cuadra con el hook real: el índice tiene **17** repos, y 17 × 2,65s ≈ **45s**, que es
-justo lo que se midió con presupuesto libre (45s, cierre limpio, 6.568 chars). Dos
-puntos de medida coherentes entre sí; el escalado es lineal con el número de repos, no
-plano como se creía al escribir «en paralelo».
+Cuadra con el hook real: los 45s medidos con presupuesto libre (cierre limpio, 6.568
+chars) son ~41s de esta etapa una vez descontados los dos SSH. El escalado es lineal con
+el número de repos, no plano como se creía al escribir «en paralelo».
+
+*(Corregido el mismo día: aquí puse «el índice tiene 17 repos» y son **10**. Conté con
+`grep -c .`, que incluye las 7 líneas de comentario de `repos.txt`. Mismo fallo de
+siempre: dar por dato un número que no se miró bien. La conclusión estructural no
+cambia; el coste por repo real es mayor, ~4s, no 2,65s.)*
 
 **La consecuencia de diseño:** el coste del arranque crece con el catálogo de repos. El
 28-ago se razonaba sobre 17; hoy hay **45 carpetas en `~/repos`**. El día que el índice
