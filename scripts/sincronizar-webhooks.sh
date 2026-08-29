@@ -17,9 +17,17 @@
 # lance nada. Requiere unos clics en la web de GitHub que no se pueden hacer por API.
 # Mientras eso no exista, esto es un paso manual menos frágil que diez.
 #
+# EL DEFECTO ES "TODOS", Y ES A PROPÓSITO. La primera versión de este script leía por
+# defecto la lista de repos.txt, escrita a mano cuando cada repo vigilado costaba ~4s de
+# arranque y había que racionarlos. Con webhooks el coste es constante, así que esa razón
+# ya no existe — pero el defecto seguía apuntando a la lista corta, y el resultado fue
+# dejar sin avisar a 33 repos de 42, entre ellos agentes en produccion (lizar-correo,
+# lizar-clon, lizar-recepcion247). Nadie lo eligió: se heredó.
+# Un defecto que hay que acordarse de cambiar es un defecto mal puesto.
+#
 # USO:
-#   bash scripts/sincronizar-webhooks.sh            # los repos del índice (repos.txt)
-#   bash scripts/sincronizar-webhooks.sh --todos    # TODOS los repos de la cuenta
+#   bash scripts/sincronizar-webhooks.sh            # TODOS los repos de la cuenta
+#   bash scripts/sincronizar-webhooks.sh --indice   # solo los de repos.txt (raro)
 #   bash scripts/sincronizar-webhooks.sh --revisar  # solo informa, no crea nada
 #
 # Necesita `gh` autenticado EN ESTA MÁQUINA (no dentro del servidor: allí no hay gh) y
@@ -33,14 +41,15 @@ SECRETO_REMOTO="${BITACORA_WEBHOOK_SECRETO:-/opt/bitacora/config/webhook.secret}
 URL="${BITACORA_WEBHOOK_URL:-https://n8n.lizaraia.com/gh-bitacora/}"
 CUENTA="${BITACORA_CUENTA_GITHUB:-oscarazparren}"
 
-MODO="indice"
+MODO="todos"
 REVISAR=no
 for arg in "$@"; do
   case "$arg" in
-    --todos)   MODO="todos" ;;
+    --indice)  MODO="indice" ;;
+    --todos)   MODO="todos" ;;   # se acepta por compatibilidad; ya es el defecto
     --revisar) REVISAR=si ;;
-    -h|--help) sed -n '2,30p' "$0"; exit 0 ;;
-    *) echo "opción desconocida: $arg (usa --todos, --revisar o --help)" >&2; exit 2 ;;
+    -h|--help) sed -n '2,38p' "$0"; exit 0 ;;
+    *) echo "opción desconocida: $arg (usa --indice, --revisar o --help)" >&2; exit 2 ;;
   esac
 done
 
