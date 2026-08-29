@@ -11,6 +11,56 @@ Formato: `## AAAA-MM-DD — [dispositivo] titular`
 
 ---
 
+## 2026-08-29 — [PC viejo] La bitácora de flota se corta por ENTRADAS enteras. Cerrado el último de los tres fallos abiertos
+
+Era el que quedaba, y llevaba abierto desde el 28-ago. **`BITACORA_MAX_LINEAS` queda
+retirada.**
+
+### El fallo que cierra
+
+El corte por líneas partía la última entrada a mitad de frase **y no lo decía**. El
+28-ago costó un doble diagnóstico de la avería del operator: una máquina re-diagnosticó
+desde cero algo que la otra ya había anotado esa mañana, porque la entrada caía fuera del
+corte de 40. Subirlo a 80 solo movió dónde se parte.
+
+### Cómo
+
+El `awk` que elige las N entradas más recientes corre **en el servidor**, no aquí: es
+Linux y es rápido (22× esta máquina para el mismo trabajo, medido el 29-ago), y así no se
+trae por la red un fichero que solo va a recortarse. Devuelve además el TOTAL de entradas
+que hay, para poder decir cuántas quedan fuera en vez de callarlo — antes ni siquiera se
+sabía cuánto se estaba dejando.
+
+Dos techos, no uno, por lo mismo que en las secciones 1 y 1b: las entradas no pesan
+igual, así que contarlas no acota el tamaño. Si no caben, se sueltan **enteras**.
+
+```
+1 entrada de flota = 2.888 chars | 2 = 6.478 | 3 = 9.654   (techo total: 10.000)
+```
+
+`FLOTA_MAX_CHARS=5000` deja **el mismo presupuesto que daban las 80 líneas** (4.957): sin
+regresión, pero ahora lo que llega son entradas completas. Es el intercambio deliberado —
+menos entradas, pero ninguna partida, y se dice lo que falta.
+
+**Probado el caso apretado**, que era el que podía romper: `agentes-lizar`, con las
+secciones 1 y 2 a la vez → **9.638 chars, sin corte global**, y la salida termina en
+`--- FIN DEL REGISTRO ---` en vez de a mitad de frase.
+
+### Una variable retirada que lo dice
+
+`BITACORA_MAX_LINEAS` ya no hace nada, así que **el hook avisa si la encuentra puesta** y
+nombra a las dos que la sustituyen. Una opción que se ignora en silencio es el mismo modo
+de fallo de siempre en versión configuración: quien la tenga creería estar controlando el
+corte sin controlar nada. Actualizada también la conf de esta máquina y el `.example`.
+
+Es además la lección del 29-ago aplicada («al quitar algo, enumerar lo que hacía y decir
+quién lo hereda»), esta vez sin que haga falta que nadie se acuerde.
+
+### Pendientes
+
+**Ninguno de código en este repo.** Los tres fallos abiertos del proyecto están cerrados:
+el silencio del hook (28-ago), el índice de coste lineal (29-ago) y este.
+
 ## 2026-08-29 — [PC viejo] El PC Nuevo contestó las tres, y la GitHub App ya está puesta: el rediseño de webhooks queda CERRADO
 
 Las tres cosas que esta máquina dejó apuntadas por la mañana venían contestadas **en la
@@ -56,13 +106,7 @@ mejora nada», que era falso. Medir mal y medir poco fallan igual.
    líneas. Es lo ÚNICO de código que queda abierto en este repo. `MAX_LINEAS=80` sigue
    partiendo entradas a mitad de frase, que es lo que el 28-ago costó un doble
    diagnóstico. La sección del repo ya lo hace bien: es aplicarle lo mismo a la 2.
-2. **DE OSCAR — rotar el secreto del webhook.** Se vio casi entero en una captura de
-   pantalla del formulario de la App. No da acceso a nada (es clave de FIRMA, no
-   credencial, y el receptor solo puede escribir `estado.txt`), pero quien la tenga podría
-   mandar avisos falsos. Se cambia en dos sitios: `/opt/bitacora/config/webhook.secret` y
-   el campo Secret de la App. Lo anota el PC Nuevo en flota; se repite aquí para que no se
-   pierda entre los dos registros.
-3. **CERRADO** — la GitHub App y `$EPOCHSECONDS`, los dos pendientes de la entrada de
+2. **CERRADO** — la GitHub App y `$EPOCHSECONDS`, los dos pendientes de la entrada de
    abajo.
 
 ## 2026-08-29 — [PC viejo] DOS SESIONES a la vez en este repo, y por poco escribo encima. Medido de dónde salen los 17s: la sección 0 ya no es el problema

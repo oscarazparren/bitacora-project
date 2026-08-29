@@ -18,7 +18,9 @@ CONF="${BITACORA_CONF:-$HOME/.claude/bitacora.conf}"
 
 ETIQUETA="${BITACORA_ETIQUETA:-sin-etiqueta}"
 FICHERO="${BITACORA_FICHERO:-BITACORA.md}"
-MAX_LINEAS="${BITACORA_MAX_LINEAS:-40}"
+FLOTA_ENTRADAS="${BITACORA_FLOTA_ENTRADAS:-3}"        # ENTRADAS enteras de la bitácora de flota (sustituye a BITACORA_MAX_LINEAS, ver sección 2)
+FLOTA_MAX_CHARS="${BITACORA_FLOTA_MAX_CHARS:-5000}"   # y su techo de CARACTERES: las entradas no pesan igual, así que contarlas no acota el tamaño
+MAX_LINEAS="${BITACORA_MAX_LINEAS:-}"                 # RETIRADA. Solo se lee para avisar de que ya no hace nada; ver el aviso al final de la sección 2
 MAX_ENTRADAS="${BITACORA_MAX_ENTRADAS:-5}"  # entradas completas, no lineas; ver NOTAS-DE-CAMPO.md
 IGNORAR="${BITACORA_IGNORAR:-*/node_modules/*|*/.claude/*}"
 FLOTA_SSH="${BITACORA_FLOTA_SSH:-}"
@@ -621,23 +623,74 @@ fi
 if usa_flota && [ -n "$FLOTA_RUTA" ]; then
   CENTRAL=""
   if hay_tiempo 8; then
+    # ENTRADAS enteras, no líneas. El corte por líneas partía la última a mitad de frase
+    # y no lo decía: el 28-ago-2026 costó un DOBLE DIAGNÓSTICO de la avería del operator
+    # -- una máquina re-diagnosticó desde cero algo que la otra ya había anotado esa
+    # mañana, porque la entrada caía fuera del corte de 40 líneas. Subirlo a 80 fue un
+    # parche que solo movió dónde se parte. Era el último de los tres fallos abiertos.
+    #
+    # El awk corre EN EL SERVIDOR a propósito: es Linux y es rápido (medido el 29-ago,
+    # 22 veces más rápido que esta máquina para el mismo trabajo), y así no se trae por
+    # la red un fichero que solo va a recortarse. Devuelve las N entradas más recientes y,
+    # al final, una línea con el TOTAL que hay, para poder decir cuántas quedan sin
+    # enseñar en vez de callarlo.
     CENTRAL=$(timeout "$(tope 12)" ssh -o ConnectTimeout=5 -o BatchMode=yes "$FLOTA_SSH" \
-      "sed -n '/^## /,\$p' '$FLOTA_RUTA' | head -n $MAX_LINEAS" 2>/dev/null | sanear_delimitadores || true)
+      "awk -v n=$FLOTA_ENTRADAS '/^## [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]/{c++} c>0 && c<=n {print} END{print \"###TOTAL###\" c+0}' '$FLOTA_RUTA'" 2>/dev/null || true)
     [ -z "$CENTRAL" ] && saltado "bitácora de FLOTA: el servidor no respondió a tiempo"
   else
     saltado "bitácora de FLOTA: sin presupuesto de tiempo para leerla"
   fi
   if [ -n "$CENTRAL" ]; then
+    # Separar el total de las entradas.
+    FLOTA_TOTAL=$(printf '%s\n' "$CENTRAL" | sed -n 's/^###TOTAL###//p' | tail -n 1)
+    CENTRAL=$(printf '%s\n' "$CENTRAL" | sed '/^###TOTAL###/d')
+
+    # Y un techo de CARACTERES además del de entradas, por el mismo motivo que ya obligó
+    # a poner dos en las secciones 1 y 1b: las entradas no pesan igual, así que contarlas
+    # no acota el tamaño. Se sueltan entradas ENTERAS, nunca a medias.
+    F_FLOTA=$(mktemp 2>/dev/null || printf '%s' "/tmp/flota.$$")
+    printf '%s\n' "$CENTRAL" > "$F_FLOTA"
+    T_FLOTA="$FLOTA_ENTRADAS"
+    while :; do
+      entradas_recientes "$F_FLOTA" "$T_FLOTA" ""
+      CENTRAL=$(printf '%s' "$ENTRADAS_TEXTO" | sanear_delimitadores)
+      [ "${#CENTRAL}" -le "$FLOTA_MAX_CHARS" ] && break
+      [ "$T_FLOTA" -le 1 ] && break
+      T_FLOTA=$((T_FLOTA - 1))
+    done
+    FLOTA_MOSTRADAS="$ENTRADAS_TOTAL"
+    [ "$ENTRADAS_OMITIDAS" -gt 0 ] && FLOTA_MOSTRADAS=$((ENTRADAS_TOTAL - ENTRADAS_OMITIDAS))
+    rm -f "$F_FLOTA"
+
     SALIDA="${SALIDA}=== BITACORA DE FLOTA (infraestructura: varios servidores y repos) ===
 $CENTRAL
 
-Para anotar aquí, con heredoc entrecomillado. NO uses printf: si el texto lleva un '%'
+"
+    # Lo que no cabe se DICE. Un recorte silencioso es el fallo que este repo persigue, y
+    # el corte por líneas ni siquiera sabía cuánto se estaba dejando fuera.
+    if [ "${FLOTA_TOTAL:-0}" -gt "${FLOTA_MOSTRADAS:-0}" ] 2>/dev/null; then
+      SALIDA="${SALIDA}(quedan $(( FLOTA_TOTAL - FLOTA_MOSTRADAS )) entrada(s) más de flota sin mostrar aquí -- completas en $FLOTA_RUTA del servidor)
+
+"
+    fi
+    SALIDA="${SALIDA}Para anotar aquí, con heredoc entrecomillado. NO uses printf: si el texto lleva un '%'
 corta la entrada por ahí y se guarda a medias.
   ssh $FLOTA_SSH \"bash \$(dirname '$FLOTA_RUTA')/anotar.sh '[$ETIQUETA] titular'\" <<'EOF'
   - lo que hice
   EOF
 
 "
+    # Una variable que ya no hace nada tiene que DECIRLO. Si se calla, quien la tenga
+    # puesta cree que está controlando el corte y no controla nada -- que es exactamente
+    # el modo de fallo silencioso de siempre, en versión configuración.
+    if [ -n "$MAX_LINEAS" ]; then
+      SALIDA="${SALIDA}AVISO DE CONFIGURACIÓN: \`BITACORA_MAX_LINEAS=$MAX_LINEAS\` está puesta pero YA NO HACE NADA.
+La bitácora de flota se corta ahora por ENTRADAS enteras, no por líneas. La sustituyen
+\`BITACORA_FLOTA_ENTRADAS\` (ahora $FLOTA_ENTRADAS) y \`BITACORA_FLOTA_MAX_CHARS\` (ahora $FLOTA_MAX_CHARS).
+Quítala de tu bitacora.conf para no volver a leerla creyendo que hace algo.
+
+"
+    fi
   fi
 fi
 

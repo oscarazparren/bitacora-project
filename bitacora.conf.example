@@ -16,27 +16,26 @@ BITACORA_FICHERO="BITACORA.md"
 # no recuperación por relevancia — eso sigue pendiente, ver README.
 BITACORA_MAX_ENTRADAS=5
 
-# Cuántas líneas de la bitácora de FLOTA (infraestructura, fuera de cualquier repo)
-# se inyectan.
+# Cuánta bitácora de FLOTA (infraestructura, fuera de cualquier repo) se inyecta.
 #
-# AQUÍ ANTES PONÍA que "esta sí puede ser corta sin coste: solo dice DÓNDE mirar, no
-# el porqué". Es FALSO y salió caro. El 28-ago-2026 una máquina re-diagnosticó desde
-# cero una avería que la otra ya había diagnosticado y anotado esa misma mañana: la
-# entrada caía fuera del corte de 40 líneas. Dos diagnósticos, dos facturas. El corte
-# no se nota — se lee una bitácora incompleta creyéndola entera.
+# SE CORTA POR ENTRADAS ENTERAS, no por líneas. `BITACORA_MAX_LINEAS` quedó RETIRADA el
+# 29-ago-2026; si la tienes puesta, el hook te avisa de que ya no hace nada.
 #
-# Medido el 29-ago-2026 contra una bitácora de flota real:
-#    40 líneas = 2.486 chars ->  2 entradas (la 2ª cortada a mitad de frase)
-#    80 líneas = 4.957 chars ->  3 entradas
-#   120 líneas = 7.333 chars ->  4 entradas, pero sumado a la sección de repo (6.000)
-#                                se pasa de BITACORA_MAX_CHARS_TOTAL=10000 y Claude
-#                                Code DESCARTA LA INYECCIÓN ENTERA, sin avisar.
+# Por qué se retiró, con el daño medido: el corte por líneas parte la última entrada a
+# mitad de frase y no lo dice. El 28-ago-2026 una máquina re-diagnosticó desde cero una
+# avería que la otra ya había anotado esa misma mañana, porque la entrada caía fuera del
+# corte. Dos diagnósticos, dos facturas. Subirlo de 40 a 80 solo movió dónde se parte.
 #
-# O sea que el techo no es estético: pasarse cuesta el envío completo. 80 es el mayor
-# valor con margen. Sigue siendo un parche —corta por LÍNEAS, así que puede partir una
-# entrada a mitad de frase—; el arreglo bueno es cortar por ENTRADAS enteras, como ya
-# hace la sección del repo.
-BITACORA_MAX_LINEAS=80
+# Hacen falta DOS techos, por lo mismo que en las secciones del repo y la carpeta: las
+# entradas no pesan igual, así que contarlas no acota el tamaño. Medido el 29-ago sobre
+# una bitácora de flota real: 1 entrada = 2.888 chars, 2 = 6.478, 3 = 9.654. Con
+# BITACORA_MAX_CHARS_TOTAL en 10.000, tres entradas enteras se lo comen casi todo.
+#
+# 5.000 deja el MISMO presupuesto que daban las 80 líneas (4.957): sin regresión, pero
+# ahora lo que llega son entradas COMPLETAS y se dice cuántas se quedan fuera. Si no
+# caben todas se sueltan enteras, nunca a medias.
+BITACORA_FLOTA_ENTRADAS=3
+BITACORA_FLOTA_MAX_CHARS=5000
 
 # Carpetas donde el hook no crea nada y calla si no hay bitácora ya.
 # OJO: no excluir "*/repos/*" a secas — si guardas ahí tus proyectos activos (no
