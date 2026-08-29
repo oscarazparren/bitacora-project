@@ -11,6 +11,81 @@ Formato: `## AAAA-MM-DD — [dispositivo] titular`
 
 ---
 
+## 2026-08-29 — [PC viejo] DISEÑO (de Oscar): que el índice lo calcule el servidor, no cada cliente. El coste pasa de lineal en N a constante
+
+Idea de Oscar al leer la medición de la entrada de abajo, y es la buena. No se
+construye: es funcionalidad nueva y **la cubre el congelado**. Se anota entera para que
+al levantarlo esté decidida y no haya que volver a pensarla.
+
+### Lo que hace hoy la sección 0, dicho sin adornos
+
+No lee 45 repos, ni lee ningún repo: por cada línea del índice (**17**, no 45) lanza un
+`git ls-remote URL HEAD` contra GitHub para traerse **un SHA**, y lo compara con el
+marcador local `~/.claude/bitacora-visto`. Distinto SHA = ha cambiado. El 45 de la
+entrada de abajo era una prueba de esfuerzo, no lo que corre a diario.
+
+O sea: **17 conexiones de red desde el cliente para traer 17 líneas de texto.**
+
+### La medición que lo cierra
+
+Los MISMOS 17 repos, en el servidor de flota, **en serie y sin paralelismo ninguno**:
+
+```
+PC viejo (Windows, 17 en "paralelo") ...... 45s
+servidor lizar (Linux, 17 en serie) ....... 2s
+un ls-remote suelto en el servidor ........ <1s
+```
+
+**22 veces más rápido haciendo el trabajo de la forma tonta.** Confirma la causa de la
+entrada de abajo: lo caro no es la red ni GitHub, es **Windows creando procesos y cada
+hijo negociando su propio TLS**. La misma tarea en una máquina Linux no tiene ese peaje.
+
+*Honestidad sobre ese 2s:* la mayoría de esos 17 fallan rápido en el servidor por falta
+de credenciales (ver obstáculo), así que el 2s no es un camino de éxito limpio y el
+número real será algo mayor. La conclusión estructural no cambia: el orden de magnitud
+es segundos, no decenas de segundos.
+
+### El diseño
+
+La «carpetita central» que propone Oscar **ya existe**: es `lizar`. Ya guarda
+`repos.txt`, ya guarda la bitácora de flota, y el hook ya habla con él en 2s. Lo único
+que le falta es guardar **los SHA**.
+
+1. Un `cron` en el servidor refresca `/opt/bitacora/estado.txt` (nombre → SHA actual).
+   El trabajo se hace **una vez para toda la flota**, no una vez por máquina y arranque.
+2. El cliente hace **UNA** llamada SSH, se trae el fichero entero y lo compara contra su
+   marcador local.
+
+El «desde tu última sesión» sigue siendo local y por máquina — cada PC tiene su
+`bitacora-visto` — y eso es correcto y gratis: el servidor publica el estado del mundo,
+no el estado de nadie.
+
+**Lo que se gana no es velocidad, es la pendiente.** Hoy el arranque cuesta lineal en el
+número de repos (~2,65s cada uno) y por eso crecer el catálogo rompe el arranque. Con
+esto cuesta **lo mismo con 17 que con 45 que con 200**: una llamada. Mata el fallo de
+raíz en vez de acotarlo.
+
+Deja además obsoleto el pendiente de «acotar la etapa de `ls-remote`»: no hay que acotar
+una etapa que desaparece.
+
+### El obstáculo, medido y sin resolver
+
+**El servidor NO tiene credenciales para los repos privados.** Comprobado contra
+`agentes-lizar` (privado): falla. Hoy solo vería los públicos, que es justo lo contrario
+de lo que hace falta. Requiere un token de solo-lectura en el servidor, y eso es una
+credencial en una máquina compartida: hay que decidir alcance y dónde vive. **No se toca
+en esta sesión.**
+
+Es también, en pequeño, el mecanismo que `CLAUDE.md` dejó pendiente el 18-ago
+(«detección automática contra la API de GitHub»). Mismo sitio, mismo token.
+
+### Pendientes
+
+1. **EN ESPERA (congelado) — construir el `estado.txt` + cron + la lectura en el hook.**
+   Es el arreglo bueno de la grieta del presupuesto. Diseño ya decidido, arriba.
+2. **EN ESPERA — el token de solo-lectura en el servidor.** Bloquea al punto 1 y es
+   decisión de Oscar por ser una credencial, no una preferencia técnica.
+
 ## 2026-08-29 — [PC viejo] MEDIDA la grieta del presupuesto: el paralelo NO es paralelo. 45 repos que tardan 1s cada uno tardan 129s juntos
 
 Ejecutado el pendiente DESBLOQUEADO del 28-ago (medir, que nunca estuvo congelado) y el
