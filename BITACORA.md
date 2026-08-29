@@ -11,6 +11,51 @@ Formato: `## AAAA-MM-DD — [dispositivo] titular`
 
 ---
 
+## 2026-08-30 — [PC viejo] El aviso de corte de sesión pasa de MB a tokens de contexto
+
+`hooks/userpromptsubmit-contexto.sh` avisaba mirando el peso en bytes del `.jsonl`
+(2 MB / 3,5 MB). Medido el 29-ago sobre 56 sesiones de la flota: ese umbral de 2 MB
+correspondía a sesiones de entre 58k y 394k tokens de contexto según el caso — un
+factor 6,8x de un lado a otro del mismo umbral (rho(MB, tokens) = 0,927: hay
+correlación, pero no la precisión que hace falta para cortar en el momento justo).
+La causa es que el peso en bytes mezcla bloques de pensamiento y salidas de
+herramientas — que engordan el fichero pero no todos entran en el contexto que se
+reenvía — con los tokens que sí se facturan cada turno.
+
+**Ahora mide tokens de verdad**: suma `cache_read_input_tokens +
+cache_creation_input_tokens + input_tokens` del último turno con `usage` en el
+transcript (`output_tokens` no cuenta, no se reenvía). Umbrales nuevos, en
+`BITACORA_CONTEXTO_AVISO_TOKENS` (250k) y `BITACORA_CONTEXTO_URGENTE_TOKENS`
+(400k) — las viejas `BITACORA_CONTEXTO_AVISO`/`URGENTE` (bytes) quedan retiradas.
+Documentado en `bitacora.conf.example`.
+
+Nuevo `scripts/calibrar-umbral.py`: recorre `~/.claude/projects/*/*.jsonl` y
+regenera esta distribución (Spearman a mano, sin numpy) para poder recalibrar sin
+fiarse de un número escrito una vez en un comentario.
+
+### Un fallo propio, cazado antes de que llegara a la otra máquina
+
+La primera versión mandaba el aviso de "variable retirada" por `stderr`. **No lo
+habría visto nadie nunca**: el wrapper de este hook en `settings.json` es
+`... 2>/dev/null || true` — descarta stderr siempre, en las dos máquinas. Cualquier
+aviso de un hook tiene que ir por `stdout` (el JSON de `additionalContext`), igual
+que ya hace la sección 2c de `sessionstart-leer.sh` con sus avisos de configuración
+descuadrada. Corregido: ahora usa el mismo canal, con su propio deduplicado por
+sesión (una vez y calla, no en cada turno).
+
+**Vale para cualquier hook nuevo de este repo**: si vas a avisar de algo, que sea
+por el JSON de salida, nunca por stderr — se pierde en silencio y parece que
+funciona porque el hook no falla, exit 0 y todo.
+
+### Qué necesita el otro PC
+
+**Nada manual.** Los umbrales nuevos son el valor por defecto del script; con
+`git pull` ya están activos, sin tocar `bitacora.conf`. Solo hace falta editarlo si
+se quiere un umbral distinto de 250k/400k (ver `bitacora.conf.example`), o si
+`BITACORA_CONTEXTO_AVISO`/`URGENTE` (bytes) estuvieran puestas ahí — no era el
+caso en ninguna de las dos máquinas al hacer este cambio, pero si aparecen, el
+hook avisa una vez por sesión y toca borrarlas.
+
 ## 2026-08-29 — [PC Nuevo] Giro de posicionamiento: el producto es UNA máquina con VARIAS cuentas, no equipos. Y el INSTALAR.md describe un sistema que ya no existe
 
 Conversación con Óscar al cerrar el día. Tres cosas, y la tercera cambia a quién se le

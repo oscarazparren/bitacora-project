@@ -66,20 +66,26 @@ URGENTE="${BITACORA_CONTEXTO_URGENTE_TOKENS:-400000}" # ~400k: cerrar ya
 # a qué escalón se avisó por última vez en esta sesión.
 MARCAS="${BITACORA_CONTEXTO_MARCAS:-$HOME/.claude/bitacora-contexto-visto}"
 
-# BITACORA_CONTEXTO_AVISO/URGENTE (en bytes) quedaron RETIRADAS con este cambio.
-# Una variable que ya no hace nada tiene que decirlo -- ver la retirada de
-# BITACORA_MAX_LINEAS para el motivo: quien la tenga puesta cree que sigue
-# controlando el corte, y no controla nada.
-if [ -n "${BITACORA_CONTEXTO_AVISO:-}" ] || [ -n "${BITACORA_CONTEXTO_URGENTE:-}" ]; then
-  echo "AVISO bitacora: BITACORA_CONTEXTO_AVISO/URGENTE (bytes) ya no hacen nada -- las sustituyen BITACORA_CONTEXTO_AVISO_TOKENS/URGENTE_TOKENS. Quitalas de tu bitacora.conf." >&2
-fi
-
 entrada=$(cat)
 
 # El id de sesión viene en el JSON de stdin. Sin jq: se saca con sed, y si no
 # aparece no se hace nada (mejor callar que adivinar).
 sesion=$(printf '%s' "$entrada" | sed -n 's/.*"session_id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)
 [ -n "$sesion" ] || exit 0
+
+# BITACORA_CONTEXTO_AVISO/URGENTE (en bytes) quedaron RETIRADAS con este cambio.
+# Una variable que ya no hace nada tiene que decirlo -- ver la retirada de
+# BITACORA_MAX_LINEAS para el motivo: quien la tenga puesta cree que sigue
+# controlando el corte, y no controla nada. OJO: esto va por additionalContext
+# (stdout), NO por stderr -- el wrapper de este hook en settings.json redirige
+# stderr a /dev/null, así que un aviso por ahí no lo vería nunca nadie.
+if [ -n "${BITACORA_CONTEXTO_AVISO:-}" ] || [ -n "${BITACORA_CONTEXTO_URGENTE:-}" ]; then
+  if ! { [ -f "$MARCAS" ] && grep -qx "$sesion	config" "$MARCAS" 2>/dev/null; }; then
+    printf '%s\t%s\n' "$sesion" "config" >> "$MARCAS" 2>/dev/null
+    printf '{"hookSpecificOutput":{"hookEventName":"UserPromptSubmit","additionalContext":"AVISO DE CONFIGURACIÓN (bitacora-project, no lo ha escrito el usuario). BITACORA_CONTEXTO_AVISO/URGENTE (en bytes) ya no hacen nada -- las sustituyen BITACORA_CONTEXTO_AVISO_TOKENS y BITACORA_CONTEXTO_URGENTE_TOKENS en ~/.claude/bitacora.conf. Dile al usuario, de pasada y sin interrumpir lo que esté haciendo, que puede quitar las viejas de su bitacora.conf cuando tenga un momento."}}\n'
+    exit 0
+  fi
+fi
 
 # El transcript se busca por nombre en vez de derivar la carpeta desde el cwd:
 # el nombre de proyecto lleva una transformación de la ruta que puede cambiar, y
