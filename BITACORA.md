@@ -11,6 +11,73 @@ Formato: `## AAAA-MM-DD — [dispositivo] titular`
 
 ---
 
+## 2026-08-29 — [PC viejo] De vuelta a mecanismo: hook restaurado y los webhooks dejan de depender de que alguien se acuerde
+
+Decisión de Oscar: «muévelo a mecanismo, todo lo que se pueda». Hecho lo que se puede
+hoy, y dicho claramente lo que sigue sin poderse.
+
+### 1. `userpromptsubmit-contexto.sh` restaurado
+
+Recuperado del historial (`3a2569b^`), sintaxis validada, y vuelto a enganchar en
+`~/.claude/settings.json`. Hooks activos ahora: `SessionStart` + `UserPromptSubmit`.
+`Stop` sigue retirado, y esa retirada sí era correcta (se disparaba en cada turno).
+
+### 2. Los webhooks dejan de ser un paso que hay que recordar
+
+Lo detectó Oscar preguntando: «¿y si mañana doy de alta un repo nuevo?». Tenía razón y
+era un agujero: **un webhook es POR REPO**, así que cada repo futuro nacía mudo hasta
+que alguien repitiera el comando. Mismo modo de fallo de siempre — depende de que una
+persona se acuerde.
+
+`scripts/sincronizar-webhooks.sh` (nuevo): idempotente, informa de lo que hace, no
+duplica nada, y devuelve código de error si algún repo se queda mudo. Modos: por defecto
+los del índice, `--todos` para los 42 de la cuenta, `--revisar` para no tocar nada.
+
+Probado en `--revisar`: detecta correctamente 1 puesto y 9 sin poner, 0 fallos.
+
+### 3. Lo que NO se ha podido mover a mecanismo, dicho sin adornos
+
+**El script sigue habiendo que ejecutarlo.** No es el arreglo definitivo. El arreglo de
+verdad es una **GitHub App instalada en la cuenta con acceso a «All repositories»**: esa
+cubre los repos futuros sola, sin que nadie lance nada nunca más. Requiere unos clics en
+la web de GitHub que no se pueden dar por API. **Queda anotado para no venderlo como
+resuelto**, que es justo lo que este repo lleva un mes aprendiendo a no hacer.
+
+### El criterio que sale de todo esto, y que vale más que el código
+
+> **Si cumplir una regla exige detectar un momento → mecanismo, no prosa.**
+> **Si la regla describe cómo hacer algo que ya estás haciendo → prosa vale.**
+
+Hoy se incumplieron tres reglas escritas (verificar antes de afirmar ×3, un chat por
+repo, y el aviso de coste). Las tres exigían notar un momento. Ninguna de las que
+describen *cómo* trabajar falló. Ayer se cambió un mecanismo por prosa y **la prosa
+aguantó menos de 24 horas**.
+
+### Números de coste, medidos hoy (para no volver a discutirlo a ojo)
+
+Opus 5 $5/$25 por millón, Sonnet 5 $2/$10, lectura de caché 0,1×, escritura 2× (TTL 1h).
+Esta sesión: 222 peticiones, **232.049 tokens de contexto**, **$28,40** gastados.
+
+```
+seguir en Opus aquí .......... $0,116/turno y subiendo
+cambiar a Sonnet SIN cortar .. $0,928 el turno del cambio   <- LA PEOR
+chat nuevo en Sonnet ......... $0,060 y luego ~$0,005/turno <- la buena
+chat nuevo en Opus ........... $0,150 y luego ~$0,012/turno
+```
+
+**Lo que ahorra cortar no es la caché: es tirar 232.000 tokens de contexto y arrancar
+con 15.000.** El peaje del cambio de modelo es calderilla al lado. Se anota porque en
+esta sesión se recomendó primero la opción peor.
+
+### Pendientes
+
+1. **DESBLOQUEADO — lanzar `scripts/sincronizar-webhooks.sh`** para los 9 que faltan.
+   Desde el PC, no dentro del servidor.
+2. **EN ESPERA — la GitHub App** que haga innecesario el script. Necesita acción de
+   Oscar en la web de GitHub.
+3. **DESBLOQUEADO — cambiar la sección 0 del hook** para leer `estado.txt` en una sola
+   llamada SSH. Es lo que queda para cobrar el beneficio entero.
+
 ## 2026-08-29 — [PC viejo] Al retirar el tercer hook se perdió una función y NADIE lo notó. La justificación de la retirada era falsa, y esta sesión lo demuestra
 
 Lo levantó Oscar, no yo, y llevaba un día activo.
