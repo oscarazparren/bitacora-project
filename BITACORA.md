@@ -78,25 +78,51 @@ medición mal montada tiene el mismo tono de dato que uno bueno.**
    DESBLOQUEADO desde el 28-ago: cerrado.
 3. **`receptor-webhook.py` reingería su propia cabecera.** `# nombre` pasaba el filtro
    (3 campos, primero no vacío) y entraba como un repo; luego se escribía otra cabecera
-   encima. Visto en vivo: dos cabeceras y una fila basura permanente. Arreglado y probado
-   contra el fichero real; se cura solo en el siguiente push. **NO DESPLEGADO todavía.**
+   encima. Visto en vivo: dos cabeceras y una fila basura permanente. **DESPLEGADO Y
+   VERIFICADO** (ver abajo).
 4. **`estado.txt` se escribía 0600**, así que solo funcionaba porque el cliente entra por
-   SSH como root. Dependencia oculta: puesto `os.chmod(tmp, 0o644)`. **Sin verificar**: la
-   prueba corrió en Windows, donde `os.chmod` no honra modos POSIX. Se comprueba al
-   desplegar.
+   SSH como root. Dependencia oculta —el día que alguien entrara con otro usuario, el
+   índice se quedaría sin datos sin saber por qué—. Puesto `os.chmod(tmp, 0o644)`.
+
+### Desplegado en LIZAR-1, con la verificación hecha allí
+
+Autorizado por Oscar. Copia de seguridad previa en `/root/receptor-webhook.py.bak-
+20260829-154447`, md5 comparado a los dos lados (`fdc54350…`, idéntico) y sintaxis
+validada con el `python3` del propio servidor antes de instalar nada.
+
+Comprobado **después** del reinicio, mandando un aviso firmado desde dentro del servidor
+con el mismo repo y el mismo SHA que ya figuraban —idempotente, no falsea ningún dato—
+solo para disparar la reescritura:
+
+```
+antes:  2 cabeceras + fila basura + repo-de-prueba   -rw------- (0600)
+después: 1 cabecera + 1 fila real                    -rw-r--r-- (0644)
+```
+
+El 0644 es justo lo que la prueba en Windows NO pudo verificar (`os.chmod` allí solo
+entiende el bit de solo-lectura). Se dijo que quedaba sin verificar, y aquí queda
+verificado. Servicio `active`, journal limpio.
+
+**De regalo, la confirmación de que el circuito entero funciona solo:** el push de
+`ccd328e` de esta misma sesión llegó al servidor por webhook sin que nadie lanzara nada
+(`bitacora-project ccd328e… 10:28:40 UTC`, la misma hora a la que se hizo el push).
+
+*(Un susto por el camino: el receptor escribió `13:45 UTC` cuando poco antes marcaba
+`10:28 UTC`, y pareció desfase de relojes. Comprobado en vez de supuesto: PC 15:46:10,
+servidor 15:46:13, ambos CEST y sincronizados por NTP. No había desfase — eran tres horas
+de reloj real esperando la autorización para desplegar. Mirarlo costó una orden.)*
 
 ### Pendientes
 
-1. **DESBLOQUEADO — desplegar el receptor arreglado** en LIZAR-1 y verificar allí el 0644
-   y que la fila basura desaparece. Es producción: lo autoriza Oscar.
-2. **DESBLOQUEADO — `repo-de-prueba` sigue en `estado.txt`**, resto de las pruebas de
-   ayer. No se ve en el índice (el cliente recorre `repos.txt`, no `estado.txt`), pero es
-   dato falso en un fichero de estado. Quitarlo al desplegar.
-3. **DESBLOQUEADO — que `entradas_recientes()` parta la bitácora UNA vez** en lugar de una
+1. **DESBLOQUEADO — que `entradas_recientes()` parta la bitácora UNA vez** en lugar de una
    por iteración del bucle. Medido arriba: 4,85s de los 15s, y creciendo con el fichero.
    No lo toco en esta sesión para no volver a chocar con la otra en el mismo fichero.
-4. **EN ESPERA — cortar la bitácora de flota por ENTRADAS enteras** en vez de por líneas.
+2. **EN ESPERA — cortar la bitácora de flota por ENTRADAS enteras** en vez de por líneas.
    Sigue abierto desde el 29-ago; el 80 de `MAX_LINEAS` es un parche que aún parte frases.
+3. **CERRADO — el pendiente 1 de la entrada de abajo («averiguar los 17s»)** queda
+   respondido por la medición de arriba: sección 0 = 4,82s, sección 1 = 8,75s. La sospecha
+   que dejaba escrita («queda tiempo sin explicar en el resto del script») acertaba de
+   pleno; el sitio concreto es el bucle de `entradas_recientes()`.
 
 ## 2026-08-29 — [PC viejo] La sección 0 ya lee estado.txt: 17s/25s con 40 repos, y el coste deja de crecer
 
