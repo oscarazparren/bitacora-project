@@ -11,6 +11,94 @@ Formato: `## AAAA-MM-DD — [dispositivo] titular`
 
 ---
 
+## 2026-08-29 — [PC Nuevo] El .example sigue vendiendo el consejo que el 28-ago quedó desmentido; y esta máquina llevaba 10 commits sin enterarse de nada
+
+Sesión de puesta al día de esta máquina. Dos hallazgos de producto y una medición.
+
+### 1. `bitacora.conf.example` documenta lo contrario de lo que se aprendió (SIN ARREGLAR)
+
+El comentario de `BITACORA_MAX_LINEAS` sigue diciendo, hoy, palabra por palabra:
+
+> «Esta sí puede ser corta sin coste: solo dice DÓNDE mirar, no el porqué, así que
+> no sufre igual el truncado por líneas.»
+
+La entrada del 28-ago de este mismo fichero lo desmiente con daño medido: el PC viejo
+re-diagnosticó desde cero la avería del operator porque la entrada que el PC nuevo había
+escrito esa mañana caía fuera del corte de 40 líneas. Dos diagnósticos, dos facturas.
+
+**El producto sigue repartiendo el consejo que su propio registro de campo ya tumbó.**
+Quien clone el repo hoy se lleva el valor 40 y la explicación de por qué está bien. Es el
+mismo modo de fallo que `anotar.sh` sin `git` (25-ago): la documentación afirma algo que
+el código y los hechos ya no sostienen, y nadie lo nota porque nada falla ruidosamente.
+
+### 2. La medición que faltaba para elegir el número (no había ninguna)
+
+El 28-ago se dejó anotado que 40 era un parche sin medir. Medido hoy contra la bitácora
+de flota real:
+
+```
+40 líneas = 2.486 chars →  2 entradas (la 2ª cortada a mitad de frase)
+80 líneas = 4.957 chars →  3 entradas
+120 líneas = 7.333 chars → 4 entradas, pero con la sección de repo llena (6.000)
+                            se pasa de MAX_CHARS_TOTAL=10000 → Claude Code
+                            DESCARTA EL ENVÍO ENTERO
+```
+
+Ese último dato es el que acota de verdad: el techo no es estético, pasarse cuesta la
+inyección completa. **80 es el mayor valor con margen seguro.** Aplicado solo en la
+config local de esta máquina, no en el `.example` (ver pendientes).
+
+Verificado ejecutando el hook de verdad desde fuera de un repo, que es el caso en que
+se inyecta flota: 5.875 chars, 3 entradas, cierre limpio en `--- FIN DEL REGISTRO ---`
+en vez de a mitad de frase. `9s/25s | ok` en el log.
+
+### 3. Confirmado que el arreglo del timeout funciona fuera del PC viejo
+
+El log de esta máquina llevaba hasta hoy el formato viejo (`bytes=2917`, sin tiempo) —
+o sea, el que mentía. Tras el `git pull` la primera ejecución ya escribe
+`bytes=5118 | 9s/25s | ok`. El cuarto fallo silencioso queda cerrado también aquí, y
+esta vez comprobado en una segunda máquina, no solo donde se arregló.
+
+### 4. Lo que NO viaja por git, y esta máquina demostró que importa
+
+Esta máquina llevaba **10 commits de retraso** (27, 28 y 29-ago) y, además del código,
+le faltaba todo lo que el `git pull` no trae:
+
+- Las tres variables nuevas de `bitacora.conf` (`PRESUPUESTO`, `CARPETA_TECHO`,
+  `CARPETA_MAX_CHARS`). El script tiene valores por defecto, así que **funcionaba sin
+  avisar de que le faltaban** — no es un fallo, pero sí un punto ciego: la config no se
+  compara nunca contra el `.example`.
+- Las dos secciones nuevas de `CLAUDE.md` («Un chat por repo», «Verificar antes de
+  afirmar»). Reconstruidas aquí a partir de esta bitácora, así que la redacción puede no
+  ser idéntica a la del PC viejo.
+
+Idea que sale de aquí, **sin construir y sin decidir**: el hook podría comparar las
+claves de `bitacora.conf` contra las del `.example` de la versión que acaba de traerse y
+decir «te faltan N variables nuevas». Es barato y ataca justo lo que hoy no avisa. No se
+hace ahora: hay congelado de funcionalidad nueva (ver más abajo).
+
+### Pendientes
+
+1. **EN ESPERA — corregir el comentario de `MAX_LINEAS` en `bitacora.conf.example`** y
+   decidir su valor por defecto. Es documentación que miente, no funcionalidad nueva,
+   así que el congelado no lo cubre; se deja EN ESPERA solo porque el arreglo bueno
+   (punto 2) puede cambiar el número, y no tiene sentido escribirlo dos veces.
+2. **EN ESPERA — cortar la bitácora de flota por ENTRADAS enteras**, como ya hace la
+   sección de repo, en vez de por líneas. Es el arreglo de verdad del fallo nº1 de los
+   tres abiertos; 80 líneas solo es un parche que sigue cortando a mitad. Es
+   funcionalidad, la cubre el congelado.
+3. **EN ESPERA — el aviso de config desfasada** del punto 4. Funcionalidad nueva,
+   congelada.
+4. **DESBLOQUEADO — el PC viejo sigue con `MAX_LINEAS=40`.** Las dos máquinas difieren
+   desde hoy a propósito. Subirlo allí es cambiar un número en un fichero local, no
+   construir nada, y hasta que se haga el fallo que costó el doble diagnóstico sigue
+   vivo en la máquina donde se manifestó. Anotado también en la bitácora de flota.
+
+**Qué NO congela el congelado de una semana:** no congela corregir documentación falsa,
+no congela cambiar números de configuración local, y no congela medir. Solo congela
+funcionalidad NUEVA. Se dice explícito porque la última vez que no se dijo, una sesión
+entera se quedó parada (ver la entrada del FRENO FALSO).
+
 ## 2026-08-28 — [PC viejo] Ejecutados los pasos 1 y 2 del rediseño: retirados los dos hooks, la regla pasó a CLAUDE.md
 
 Continuación directa de la entrada del FRENO FALSO, de más abajo: esta sesión fue la
