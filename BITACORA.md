@@ -11,6 +11,60 @@ Formato: `## AAAA-MM-DD — [dispositivo] titular`
 
 ---
 
+## 2026-08-29 — [PC viejo] El PC Nuevo contestó las tres, y la GitHub App ya está puesta: el rediseño de webhooks queda CERRADO
+
+Las tres cosas que esta máquina dejó apuntadas por la mañana venían contestadas **en la
+bitácora de FLOTA, no en la de este repo** — por eso `git` no traía nada y hubo que ir a
+mirar allí. Anotado porque volverá a pasar: *el trabajo de la otra máquina no siempre
+llega por donde lo esperas.*
+
+- **La GitHub App sobre «All repositories» está instalada y FUNCIONANDO.** Era el único
+  pendiente que ningún agente podía hacer. El PC Nuevo lo verificó **en el log del
+  receptor, no en la pantalla de GitHub**: `ping OK` al instalarse y dos pushes reales de
+  `kangurea-web` registrados solos. Los repos nuevos ya no nacen mudos, y
+  `sincronizar-webhooks.sh` deja de hacer falta para los futuros.
+- **La regla de «otra sesión viva en el repo» ya está en el `CLAUDE.md` canónico**
+  (commit `51f0f54`, en `config/`). Esta máquina se la lleva con `git pull` + `cp`; no
+  hay que reescribirla de memoria, que es como se desincronizaron antes.
+- **`$EPOCHSECONDS`: vía libre confirmada.** Los CUATRO bash de cada máquina son
+  5.3.15(1). Verificado aquí ejecutándolos, no de oídas.
+
+### Aplicado: `restante()` y `tope()` dejan de lanzar procesos
+
+`date +%s` se llamaba 8 veces por arranque. Sustituido por `${EPOCHSECONDS:-$(date +%s)}`.
+
+**El respaldo no es adorno:** `$EPOCHSECONDS` existe desde bash 5.0 y en un bash 4.x
+saldría VACÍO y la aritmética reventaría — o sea, ahorrar medio segundo aquí costaría el
+hook entero en otra máquina. Hoy no se usa; se deja por si aparece una tercera.
+
+```
+8 forks de date, medidos aparte ...... 0,584s  (73 ms cada uno)
+hook entero, media de 4 pasadas ...... 7,24s -> 6,67s  (0,57s menos)
+```
+
+Salida **idéntica byte a byte** (9.686), comprobado antes de mirar el reloj.
+
+**Y un aviso sobre la medición, que es la lección del día otra vez:** con DOS pasadas el
+resultado parecía cero (6,56/6,23 y 6,22/6,28: una a favor y otra en contra). Con cuatro
+sale 0,57s, y coincide con los 0,584s medidos por separado. **Dos muestras no bastaban
+para ver un efecto del tamaño del ruido**, y de haberme quedado ahí habría escrito «no
+mejora nada», que era falso. Medir mal y medir poco fallan igual.
+
+### Pendientes
+
+1. **DESBLOQUEADO — cortar la bitácora de flota por ENTRADAS enteras** en vez de por
+   líneas. Es lo ÚNICO de código que queda abierto en este repo. `MAX_LINEAS=80` sigue
+   partiendo entradas a mitad de frase, que es lo que el 28-ago costó un doble
+   diagnóstico. La sección del repo ya lo hace bien: es aplicarle lo mismo a la 2.
+2. **DE OSCAR — rotar el secreto del webhook.** Se vio casi entero en una captura de
+   pantalla del formulario de la App. No da acceso a nada (es clave de FIRMA, no
+   credencial, y el receptor solo puede escribir `estado.txt`), pero quien la tenga podría
+   mandar avisos falsos. Se cambia en dos sitios: `/opt/bitacora/config/webhook.secret` y
+   el campo Secret de la App. Lo anota el PC Nuevo en flota; se repite aquí para que no se
+   pierda entre los dos registros.
+3. **CERRADO** — la GitHub App y `$EPOCHSECONDS`, los dos pendientes de la entrada de
+   abajo.
+
 ## 2026-08-29 — [PC viejo] DOS SESIONES a la vez en este repo, y por poco escribo encima. Medido de dónde salen los 17s: la sección 0 ya no es el problema
 
 Sesión abierta en paralelo a la que hizo `36ceedc`. El hallazgo del día no es código: es que

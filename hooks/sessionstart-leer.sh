@@ -53,12 +53,23 @@ SALIDA=""
 # verdad importa) no cuesta red y sale siempre; lo de RED se abandona en cuanto se
 # agota el presupuesto, y se DICE que se ha abandonado.
 PRESUPUESTO="${BITACORA_PRESUPUESTO:-25}"   # segundos; debe quedar holgado bajo el timeout del hook
-INICIO_EPOCH=$(date +%s)
+
+# La hora se lee con $EPOCHSECONDS, que es variable interna de bash: no lanza proceso.
+# 'date +%s' se llamaba 8 veces por arranque (6 desde hay_tiempo/tope, mas el inicio y el
+# cierre) y en Git Bash sobre Windows cada proceso cuesta mas que el trabajo que hace --
+# es el mismo peaje que ya se pago dos veces hoy, en la seccion 0 y en entradas_recientes.
+#
+# El respaldo a 'date' NO es adorno: $EPOCHSECONDS existe desde bash 5.0, y sin el, en un
+# bash 4.x la variable saldria VACIA y la aritmetica de abajo reventaria -- o sea que
+# ahorrar un segundo aqui costaria el hook entero en otra maquina. Comprobado el
+# 29-ago-2026 que las DOS maquinas llevan 5.3.15 (los cuatro bash de cada una, no solo el
+# del PATH), asi que hoy el respaldo no se usa; se deja por si aparece una tercera.
+INICIO_EPOCH=${EPOCHSECONDS:-$(date +%s)}
 DEGRADADO=""
 
 # Segundos que quedan del presupuesto. Nunca negativo.
 restante() {
-  local r=$(( PRESUPUESTO - ( $(date +%s) - INICIO_EPOCH ) ))
+  local r=$(( PRESUPUESTO - ( ${EPOCHSECONDS:-$(date +%s)} - INICIO_EPOCH ) ))
   [ "$r" -lt 0 ] && r=0
   printf '%s' "$r"
 }
@@ -637,7 +648,7 @@ LOG="${BITACORA_LOG:-$HOME/.claude/bitacora-hook.log}"
 # Code dejaba una línea idéntica a la de un éxito. El log declaraba victoria
 # precisamente en el caso en que había fallado. Con los segundos delante, una
 # ejecución moribunda se ve de un vistazo.
-TRANSCURRIDO=$(( $(date +%s) - INICIO_EPOCH ))
+TRANSCURRIDO=$(( ${EPOCHSECONDS:-$(date +%s)} - INICIO_EPOCH ))
 ESTADO="ok"
 [ -n "$DEGRADADO" ] && ESTADO="DEGRADADO"
 [ "$TRANSCURRIDO" -gt "$PRESUPUESTO" ] && ESTADO="FUERA-DE-PRESUPUESTO"
