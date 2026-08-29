@@ -11,6 +11,45 @@ Formato: `## AAAA-MM-DD — [dispositivo] titular`
 
 ---
 
+## 2026-08-29 — [PC viejo] CIRCUITO CERRADO: GitHub avisa y el servidor se entera. Y el fallo de en medio fue pegar el comando en la máquina equivocada
+
+El webhook de `bitacora-project` está creado (id `671838034`, activo, entrega `200`) y el
+receptor registró el `ping` real de GitHub a las 11:03:09, distinto de la prueba local de
+las 10:44. **La vía sin token funciona de punta a punta.**
+
+### El fallo de en medio, que merece quedar escrito
+
+El primer intento no creó nada. Diagnostiqué «le falta el scope `admin:repo_hook`» a
+partir de los scopes del token. **Era falso.** Lo que había pasado es que Oscar hizo
+`ssh lizar` y pegó el comando **dentro del servidor**, donde no hay `gh` ni existe el
+alias `lizar`.
+
+Dos lecciones, y la segunda es la buena:
+
+1. El comando necesitaba las DOS máquinas a la vez (`gh` habla con GitHub desde Windows;
+   el `$(ssh lizar …)` va a buscar el secreto al servidor). Eso no se lo dije al darlo, y
+   es justo la clase de detalle que hace que un comando correcto falle.
+2. **Teoricé una causa en vez de pedir la salida.** Tenía delante un `[]` que solo decía
+   «no hay webhooks», y de ahí salté a una explicación concreta y equivocada. La salida
+   real lo aclaró en dos segundos. Es el mismo mecanismo de siempre en este repo: dar
+   tono de dato a una deducción.
+
+### Estado
+
+Funcionando: receptor, servicio endurecido, nginx, secreto, y **1 de 10 webhooks**.
+
+### Pendientes
+
+1. **DESBLOQUEADO — crear los 9 webhooks restantes**, una vez validado el circuito con
+   el primero. Mismo comando, cambiando el nombre del repo, y **desde PowerShell, no
+   desde dentro del servidor**.
+2. **DESBLOQUEADO — cambiar la sección 0 del hook** para leer `estado.txt` en una
+   llamada SSH. Ya no está en espera: el circuito está probado.
+3. **EN ESPERA — ampliar `repos.txt`.** Medido hoy: 42 repos en la cuenta, 45 carpetas
+   locales, **10 vigilados**. La lista era corta porque cada repo costaba ~4s de
+   arranque; con webhooks el coste es constante, así que **la razón para tenerla corta
+   ha desaparecido**. Decisión de Oscar, no técnica.
+
 ## 2026-08-29 — [PC viejo] CONSTRUIDA la vía sin token: receptor de webhooks vivo en LIZAR-1. Falta el último paso, que lo tiene que autorizar Oscar
 
 Oscar eligió la vía de webhooks y levantó el congelado para esto. **La mitad del
