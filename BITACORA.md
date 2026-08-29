@@ -112,13 +112,47 @@ verificado. Servicio `active`, journal limpio.
 servidor 15:46:13, ambos CEST y sincronizados por NTP. No había desfase — eran tres horas
 de reloj real esperando la autorización para desplegar. Mirarlo costó una orden.)*
 
+### Y arreglado también, al final de la sesión: la sección 1 baja a la mitad
+
+Con la otra sesión 3h 30m en silencio y el árbol limpio, se pudo tocar el hook sin chocar.
+
+`entradas_recientes()` ahora parte la bitácora **una sola vez por fichero** y lo recuerda
+(`partir_una_vez()`), en vez de rehacerlo en cada vuelta del bucle que baja el techo.
+
+Y el hallazgo de verdad: **el culpable no era el `awk`, que cuesta 0,3s.** Era el enjambre
+de procesos de alrededor —`mktemp`, `find`, `wc`, `tr`, `ls`, `sort`, un `cat` POR ENTRADA
+y `rm`— repetido entero en cada llamada. Así que además de partir una vez se quitaron
+casi todos:
+
+- ordenar lo hace el **glob de bash** (los nombres llevan `%05d` delante, así que el orden
+  alfabético ES el numérico) → fuera `ls` y `sort`
+- contar es **el tamaño de un array** → fuera `find`, `wc` y `tr`
+- leer una entrada es **`$(<fichero)`**, redirección interna de bash → fuera `cat`
+
+`entradas_recientes()` no lanza ya ni un proceso externo.
+
+```
+sección 1:  8,75s  ->  4,55s
+hook entero: 15,7s ->  12,7s   (dos pasadas: 15,7/14,5 antes, 12,7/11,4 después)
+```
+
+**Verificado que no cambia nada más:** las dos versiones, arrancadas desde el mismo estado
+de marcadores, dan **8.499 bytes idénticos byte a byte** (`cmp`). Se comprobó antes de
+mirar el reloj, porque un arreglo rápido que cambia la salida no es un arreglo.
+
 ### Pendientes
 
-1. **DESBLOQUEADO — que `entradas_recientes()` parta la bitácora UNA vez** en lugar de una
-   por iteración del bucle. Medido arriba: 4,85s de los 15s, y creciendo con el fichero.
-   No lo toco en esta sesión para no volver a chocar con la otra en el mismo fichero.
-2. **EN ESPERA — cortar la bitácora de flota por ENTRADAS enteras** en vez de por líneas.
+1. **EN ESPERA — cortar la bitácora de flota por ENTRADAS enteras** en vez de por líneas.
    Sigue abierto desde el 29-ago; el 80 de `MAX_LINEAS` es un parche que aún parte frases.
+2. **DESBLOQUEADO, pequeño — `restante()` y `tope()` lanzan un `date +%s` cada vez** que se
+   las llama, y se las llama ~10 veces. `$EPOCHSECONDS` es variable interna de bash y las
+   dejaría a coste cero. No se hizo aquí por una razón concreta: **existe desde bash 5.0 y
+   no se ha comprobado qué bash tiene el PC Nuevo.** Si es anterior, la variable sale vacía
+   y la aritmética revienta — o sea, cambiaría un segundo por un hook roto en la otra
+   máquina. Hay que mirarlo allí antes, o dejar respaldo a `date`.
+3. **DESBLOQUEADO — decirlo en `CLAUDE.md`: comprobar si hay otra sesión viva en el mismo
+   repo antes de editar**, no solo que el árbol esté limpio. Es el hueco que abrió esta
+   sesión y ninguna regla lo cubre. No se toca aquí porque `CLAUDE.md` es fichero de Oscar.
 3. **CERRADO — el pendiente 1 de la entrada de abajo («averiguar los 17s»)** queda
    respondido por la medición de arriba: sección 0 = 4,82s, sección 1 = 8,75s. La sospecha
    que dejaba escrita («queda tiempo sin explicar en el resto del script») acertaba de

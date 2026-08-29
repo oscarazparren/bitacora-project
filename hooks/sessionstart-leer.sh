@@ -112,9 +112,36 @@ sanear_delimitadores() {
 # Da las entradas en el orden del fichero (más reciente primero, que es como se
 # escriben). Deja el resultado en variables globales: bash no devuelve texto largo
 # limpio desde una función.
-entradas_recientes() {
-  local fichero="$1" techo="$2" desde="${3:-}" dir f fecha i=0 incluidas=0
-  dir=$(mktemp -d 2>/dev/null) || { dir="/tmp/entradas.$$"; mkdir -p "$dir"; }
+# Partir la bitácora en "una entrada por fichero" da el mismo resultado se pida las veces
+# que se pida, así que se hace UNA vez por fichero y se recuerda. Antes se rehacía entera
+# en cada llamada, y a entradas_recientes() se la llama EN BUCLE: el de la sección 1 va
+# bajando el techo hasta que la salida cabe en REPO_MAX_CHARS.
+#
+# Medido el 29-ago-2026 sobre este mismo repo (BITACORA.md, 85 KB, 31 entradas): TRES
+# llamadas de ~1,5s = 4,85s de los 15s que tardaba el hook entero. Y el culpable NO era
+# el awk, que cuesta 0,3s: era el enjambre de procesos de alrededor —mktemp, find, wc,
+# tr, ls, sort, un cat POR ENTRADA y rm— repetido completo cada vez. En Git Bash sobre
+# Windows lanzar un proceso cuesta más que el trabajo que hace dentro.
+#
+# Por eso aquí abajo ya casi no queda ninguno: ordenar lo hace el glob de bash (los
+# nombres llevan %05d delante, así que el orden alfabético ES el numérico), contar es el
+# tamaño de un array, y leer una entrada es $(<fichero), que es redirección interna de
+# bash y no ejecuta 'cat'. Es la misma forma del arreglo de la sección 0: lo que hay que
+# matar es que el coste crezca con el dato, y la bitácora solo crece.
+PARTIDO_FICHERO=""
+PARTIDO_DIR=""
+PARTIDOS=()
+# El temporal ya no se borra al final de cada llamada (ahora sobrevive entre ellas a
+# propósito), así que se limpia al salir, pase lo que pase.
+trap '[ -n "${PARTIDO_DIR:-}" ] && rm -rf "$PARTIDO_DIR" 2>/dev/null' EXIT
+
+partir_una_vez() {
+  local fichero="$1"
+  # ¿Ya está partido ESTE fichero? Entonces no se toca nada. (La sección 1b parte otro
+  # distinto, el de la carpeta; al cambiar de fichero se rehace, que es lo correcto.)
+  [ "$fichero" = "$PARTIDO_FICHERO" ] && [ -d "$PARTIDO_DIR" ] && return 0
+  [ -n "$PARTIDO_DIR" ] && rm -rf "$PARTIDO_DIR" 2>/dev/null
+  PARTIDO_DIR=$(mktemp -d 2>/dev/null) || { PARTIDO_DIR="/tmp/entradas.$$"; mkdir -p "$PARTIDO_DIR"; }
   # Solo cuenta como entrada un '## ' seguido de una fecha AAAA-MM-DD. Sin este
   # anclaje, cualquier cabecera de sección que no sea una entrada (p.ej. "##
   # Dónde va cada cosa", una nota permanente antes del '---') se colaba como si
@@ -123,7 +150,7 @@ entradas_recientes() {
   # -- de ahí que la bitácora entera pudiera leerse "vacía" en silencio (bug
   # real, encontrado el 22-ago-2026 con la cabecera añadida el 20-ago en
   # agentes-lizar/BITACORA.md).
-  awk -v d="$dir" '
+  awk -v d="$PARTIDO_DIR" '
     /^## [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]/ {
       if (n > 0) close(f)
       n++
@@ -132,23 +159,36 @@ entradas_recientes() {
     }
     n > 0 { print > f }
   ' "$fichero" 2>/dev/null
-  ENTRADAS_TOTAL=$(find "$dir" -type f 2>/dev/null | wc -l | tr -d ' ')
+  PARTIDO_FICHERO="$fichero"
+  PARTIDOS=( "$PARTIDO_DIR"/* )
+  # Un glob sin coincidencias NO deja el array vacío: deja dentro el patrón literal. Sin
+  # esta comprobación, una bitácora sin ninguna entrada contaría como 1 y se intentaría
+  # leer un fichero llamado '*'.
+  [ -e "${PARTIDOS[0]:-}" ] || PARTIDOS=()
+}
+
+entradas_recientes() {
+  local fichero="$1" techo="$2" desde="${3:-}" f fecha i=0 incluidas=0
+  partir_una_vez "$fichero"
+  ENTRADAS_TOTAL=${#PARTIDOS[@]}
   ENTRADAS_TEXTO=""
   FECHA_CORTE=""
-  for f in $(ls "$dir" 2>/dev/null | sort); do
+  if [ "$ENTRADAS_TOTAL" -gt 0 ]; then
+  for f in "${PARTIDOS[@]}"; do
     i=$((i + 1))
-    fecha="${f#*_}"
+    fecha="${f##*_}"
     if [ "$i" -gt "$techo" ] || { [ -n "$desde" ] && [[ "$fecha" < "$desde" ]]; }; then
       FECHA_CORTE="$fecha"
       break
     fi
-    # $(cat ..) recorta el salto de linea final: sin anadirlo aparte, la ultima
-    # linea de una entrada se fusiona con la cabecera de la siguiente (bug real,
-    # encontrado al probar esta misma funcion el 2026-08-18).
-    ENTRADAS_TEXTO="${ENTRADAS_TEXTO}$(cat "$dir/$f")
+    # $(<fichero) recorta el salto de linea final igual que hacia $(cat ..): sin anadirlo
+    # aparte, la ultima linea de una entrada se fusiona con la cabecera de la siguiente
+    # (bug real, encontrado al probar esta misma funcion el 2026-08-18).
+    ENTRADAS_TEXTO="${ENTRADAS_TEXTO}$(<"$f")
 "
     incluidas=$((incluidas + 1))
   done
+  fi
   # Suelo mínimo: si el filtro por fecha (o un techo mal puesto) deja CERO entradas
   # pero el fichero SÍ las tiene, se enseña igualmente la más reciente. Una bitácora de
   # 19 entradas leyéndose "vacía todavía" es el peor modo de fallo de esta herramienta
@@ -163,16 +203,13 @@ entradas_recientes() {
   # que se manifieste como silencio.
   SUELO_APLICADO=""
   if [ "$incluidas" -eq 0 ] && [ "${ENTRADAS_TOTAL:-0}" -gt 0 ]; then
-    f=$(ls "$dir" 2>/dev/null | sort | head -n 1)
-    if [ -n "$f" ]; then
-      ENTRADAS_TEXTO="$(cat "$dir/$f")
+    # La más reciente es la primera del array: el glob ya viene ordenado.
+    ENTRADAS_TEXTO="$(<"${PARTIDOS[0]}")
 "
-      incluidas=1
-      SUELO_APLICADO="si"
-    fi
+    incluidas=1
+    SUELO_APLICADO="si"
   fi
   ENTRADAS_OMITIDAS=$((ENTRADAS_TOTAL - incluidas))
-  rm -rf "$dir"
 }
 
 # Dónde está clonado un repo en ESTA máquina. Primero $RUTAS (nombre<TAB>ruta, para
