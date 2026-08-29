@@ -11,6 +11,59 @@ Formato: `## AAAA-MM-DD — [dispositivo] titular`
 
 ---
 
+## 2026-08-29 — [PC viejo] Los 42 repos avisan (40 vivos + 2 archivados que no aplican). Y el fallo lo vio Oscar, no el sistema
+
+Cierre de la vía sin token. **Estado final verificado: 40 de 40 repos vivos con webhook,
+2 archivados que no pueden tenerlo, 0 fallos, código de salida 0.**
+
+### El fallo, que es del mismo tipo que llevamos todo el día cazando
+
+Se crearon 9 webhooks y se dio por bueno. Oscar preguntó lo obvio: «¿por qué esos nueve
+y no `lizar-correo`, que es un agente que está funcionando?». Medido entonces: **9 con
+webhook, 33 sin él**, incluidos agentes en producción (`lizar-correo`, `lizar-clon`,
+`lizar-recepcion247`, `lizar-auditoria`).
+
+Nadie eligió esos 9. Eran los de `repos.txt`, lista escrita a mano cuando cada repo
+vigilado costaba ~4s de arranque y había que racionarlos. **Esa razón desapareció con
+los webhooks, se midió, y se escribió en esta bitácora la misma tarde** — y aun así el
+script salió leyendo la lista vieja por defecto, con la opción `--todos` programada y
+sin usar.
+
+**Tener el dato no es lo mismo que usarlo.** Van cinco variantes del mismo fallo: el
+silencio, el log que mentía, el freno falso, la función retirada sin que nadie lo note,
+y ahora una premisa heredada que no se revisó porque no parecía haber nada que revisar.
+
+### Arreglado donde no puede repetirse
+
+1. **El defecto del script es ahora TODOS los repos** de la cuenta; `--indice` queda como
+   opción rara. Antes había que acordarse de escribir `--todos` para hacer lo correcto;
+   ahora hay que acordarse de escribir `--indice` para hacer lo raro.
+2. **`repos.txt` regenerado desde GitHub**: de 10 a 40, excluyendo archivados.
+3. **Los archivados dejan de contar como fallo.** GitHub rechaza webhooks en repos de
+   solo lectura, y aunque los aceptara nunca dispararían. Contarlos como error habría
+   hecho que el script terminara en error para siempre — **y una alarma que salta
+   siempre deja de leerse.** Se saltan y se dicen, que no es lo mismo que callarlos.
+
+### El criterio, otra vez, porque hoy se ha ganado tres veces
+
+> **Un defecto que hay que acordarse de cambiar es un defecto mal puesto.**
+
+Es el mismo principio que restaurar el hook de contexto: si algo depende de que alguien
+lo recuerde, acabará fallando. Que lo recuerde el mecanismo.
+
+### Pendientes
+
+1. **DESBLOQUEADO, y es lo único que falta para cobrar todo esto — cambiar la sección 0
+   del hook** para leer `estado.txt` en UNA llamada SSH en vez de N `ls-remote`. Hasta
+   que se haga, el arranque sigue tardando ~45s aunque el servidor ya tenga los datos.
+   Ojo: ahora `repos.txt` tiene 40 repos, así que **con el código viejo el arranque
+   costaría ~160s y no entregaría nada**. Es el paso que cierra el círculo, no un extra.
+2. **EN ESPERA — la GitHub App** sobre «All repositories», que haría innecesario volver
+   a lanzar el sincronizador cuando se cree un repo nuevo. Necesita clics en la web.
+3. **EN ESPERA — arranque en frío**: `estado.txt` solo se llena con pushes futuros, así
+   que un repo sin tocar aún no aparece. Debe informarse como «sin datos todavía», nunca
+   como «sin cambios».
+
 ## 2026-08-29 — [PC viejo] De vuelta a mecanismo: hook restaurado y los webhooks dejan de depender de que alguien se acuerde
 
 Decisión de Oscar: «muévelo a mecanismo, todo lo que se pueda». Hecho lo que se puede

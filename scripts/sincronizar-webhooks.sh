@@ -79,8 +79,16 @@ echo "URL destino: $URL"
 echo "modo: $MODO$([ "$REVISAR" = si ] && echo ' (solo revisar)')"
 echo
 
-CREADOS=0; YA=0; FALLOS=0
+CREADOS=0; YA=0; FALLOS=0; ARCHIVADOS=0
 for R in $REPOS; do
+  # Un repo archivado es de solo lectura: GitHub rechaza crear webhooks en él, y aunque
+  # los aceptara nunca dispararían porque no puede recibir push. Contarlo como fallo
+  # haría que este script terminara en error PARA SIEMPRE, y una alarma que salta
+  # siempre deja de leerse. Se salta y se dice, que no es lo mismo que callarlo.
+  if [ "$(gh api "repos/$CUENTA/$R" --jq '.archived' 2>/dev/null)" = "true" ]; then
+    echo "  $R: archivado, no aplica"
+    ARCHIVADOS=$((ARCHIVADOS+1)); continue
+  fi
   EXISTE=$(gh api "repos/$CUENTA/$R/hooks" --jq '[.[] | select(.config.url != null and (.config.url | contains("gh-bitacora")))] | length' 2>/dev/null)
   if [ -z "$EXISTE" ]; then
     echo "  $R: NO PUDE CONSULTARLO (sin permiso o no existe)"
@@ -107,7 +115,7 @@ done
 rm -f /tmp/bitacora-hook-err
 
 echo
-echo "creados: $CREADOS | ya estaban: $YA | fallos: $FALLOS"
+echo "creados: $CREADOS | ya estaban: $YA | archivados (no aplica): $ARCHIVADOS | fallos: $FALLOS"
 # Los fallos salen por código de retorno, no solo por pantalla: si algún día esto corre
 # desatendido, un repo que se quedó mudo tiene que poder detectarse sin leer el texto.
 [ "$FALLOS" -gt 0 ] && exit 1
