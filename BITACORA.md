@@ -11,6 +11,113 @@ Formato: `## AAAA-MM-DD — [dispositivo] titular`
 
 ---
 
+## 2026-08-29 — [PC Nuevo] Giro de posicionamiento: el producto es UNA máquina con VARIAS cuentas, no equipos. Y el INSTALAR.md describe un sistema que ya no existe
+
+Conversación con Óscar al cerrar el día. Tres cosas, y la tercera cambia a quién se le
+ofrece esto.
+
+### 1. `INSTALAR.md` está desfasado, y es medible
+
+Contado hoy sobre el fichero, no a ojo. Veces que aparece cada pieza construida en los
+últimos dos días:
+
+```
+webhooks 0 · receptor 0 · foto-config 0 · UserPromptSubmit 0
+ESTADO_REMOTO 0 · FLOTA_ENTRADAS 0 · PRESUPUESTO 0
+```
+
+**Las instrucciones describen un sistema que ya no existe.** Quien clone el repo hoy
+instala la versión de hace dos semanas. Y aun estando al día harían falta SIETE pasos
+manuales (clonar, crear la conf y editar la etiqueta, cablear tres hooks a mano en un
+JSON, dar acceso SSH, copiar el `CLAUDE.md` canónico, darse de alta en el índice). **No
+hay instalador.** Es el mismo modo de fallo de siempre —documentación que afirma algo que
+ya no sostiene el código— y hoy se ha dado ya dos veces más: el comentario de
+`MAX_LINEAS` en el `.example` y la contradicción del `CLAUDE.md` sobre el hook de
+contexto. Van tres en un día.
+
+### 2. Hipótesis sobre equipos: funciona a 5 personas, pero hoy se rompe justo ahí
+
+Óscar pidió hipótesis, no «hasta que no se pruebe no se sabe». Va con su porqué.
+
+**Lo que escala tal cual:** git ya resuelve N escritores; el índice por webhooks es O(1)
+en número de máquinas; y —corrección suya, y tiene razón— **no hace falta meterle una IA:
+cada usuario trae la suya**. El agente ES el lector. Decir que «necesita un agente
+vigilando» como pega es falso: eso lo tiene todo el que use estas herramientas.
+
+**Lo que se rompe, y son las dos piezas que llevan sin construirse desde el día uno:**
+
+1. **Sigue siendo un `BITACORA.md` monolítico.** No existe `.bitacora/` en ningún repo.
+   Con dos máquinas serializando contra un servidor aguanta; con 5 personas editando el
+   mismo fichero es un conflicto de merge diario. `ESQUEMA.md` lo dice desde el principio.
+2. **No hay lectura por relevancia.** Sigue siendo truncado por antigüedad contra un
+   techo fijo de 10.000 caracteres.
+
+**La consecuencia, que es lo que decide la hipótesis:** hoy **el valor por persona BAJA
+según crece el equipo** — más gente, más entradas, más truncado, y cada uno lee una
+proporción menor de lo suyo. Es lo contrario de lo que necesita una herramienta de
+equipo, y falla en silencio: parece que funciona mientras cada uno recibe menos.
+
+Con esas dos piezas construidas, la hipótesis es **sí, funciona bien a 5**. Sin ellas,
+5 es exactamente donde empieza a doler.
+
+### 3. EL GIRO: el caso bueno es UNA máquina con VARIAS cuentas
+
+Idea de Óscar, y reordena la prioridad entera. El escenario: llegas al límite de uso de
+una cuenta a media tarea, anotas, cierras, abres con otra cuenta (u otro proveedor) y la
+sesión nueva continúa donde lo dejaste.
+
+**Comprobado que funciona sin tocar nada:** `~/.claude/settings.json` y `bitacora.conf`
+son del usuario del sistema operativo, no de la cuenta de Claude, y la bitácora vive en el
+repo. Cambiar de cuenta no toca ninguna de las tres cosas.
+
+**Y aquí está lo importante: ese caso usa solo la parte que YA funciona.**
+
+```
+hace falta:  hook SessionStart + una forma de anotar        <- construido y probado
+NO hace falta: servidor, webhooks, receptor, SSH, estado.txt, fotos de config
+```
+
+Todo lo complejo y a medias existe para resolver VARIAS MÁQUINAS. Para una sola máquina
+sobra el 70% del proyecto. Y los dos problemas del punto 2 **desaparecen**: sin escritores
+simultáneos no hay conflicto de merge, y con un solo usuario el presupuesto sobra.
+
+**Orden recomendado, y es un cambio respecto al dossier:**
+
+- **1º Cuentas y proveedores.** Dolor diario y agudo, instalación de un hook, cero
+  infraestructura, y mercado mucho más ancho que «equipos que ya usan varios agentes».
+  La extensión a Claude + OpenAI + Qwen + Kimi es además **defendible**: ningún proveedor
+  va a construir la continuidad hacia el de al lado, tienen el incentivo al revés. El
+  formato ya es agnóstico (Markdown en el repo); falta un adaptador de lectura por
+  herramienta, y para varias basta con que su fichero de instrucciones lo referencie.
+- **2º Equipos.** Después, y con las dos piezas del punto 2 construidas.
+
+**La pega honesta, dicha para no vendérnosla:** esto no se monetiza fácil. Es un hook y
+una convención de Markdown, se copia en una tarde y aparecerán alternativas gratis.
+Vender el script no va a funcionar. Lo realista: **regalarlo para ganar usuarios** —que es
+justo lo que falta, hoy n=1 y el operador es el autor— y cobrar por lo que lo rodea (el
+filtrado por relevancia bien hecho, los adaptadores, y más adelante la capa de equipo y
+auditoría). **El caso de las dos cuentas no es el negocio: es el embudo.** Pero es el
+correcto, porque es lo único que se le puede poner a alguien en la mano la semana que
+viene sin que se caiga.
+
+### Pendientes
+
+1. **DESBLOQUEADO — `instalar.sh`.** Media tarde. Hace los siete pasos y **verifica que
+   funcionan** (que el hook dispara, que el JSON es válido, que se puede anotar). Es lo
+   que desbloquea a la vez el PC #3 y cualquier prueba con alguien de fuera: sin esto no
+   hay nada que enseñar a nadie. No es funcionalidad nueva, es empaquetar lo que ya hay.
+2. **DESBLOQUEADO — poner al día `INSTALAR.md`.** Documentación que miente; el congelado
+   no cubre corregirla.
+3. **EN ESPERA — un fichero por entrada (`.bitacora/`).** Condición para equipos.
+   Funcionalidad, congelada.
+4. **EN ESPERA — lectura por relevancia.** La otra condición, y probablemente *el*
+   producto: «que los cinco sepan lo que ha hecho el otro» solo vale si «lo que ha hecho
+   el otro» significa **lo que me afecta a mí**, no un volcado cronológico.
+5. **EN ESPERA — adaptadores para otras herramientas.** Funcionalidad, congelada.
+
+**Qué NO congela el congelado:** no congela empaquetar lo ya construido (el instalador),
+ni corregir documentación falsa. Solo funcionalidad nueva.
+
 ## 2026-08-29 — [PC viejo] La bitácora de flota se corta por ENTRADAS enteras. Cerrado el último de los tres fallos abiertos
 
 Era el que quedaba, y llevaba abierto desde el 28-ago. **`BITACORA_MAX_LINEAS` queda
