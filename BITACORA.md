@@ -11,6 +11,73 @@ Formato: `## AAAA-MM-DD — [dispositivo] titular`
 
 ---
 
+## 2026-08-29 — [PC viejo] El token del servidor: qué es LIZAR-1 de verdad, y por qué el riesgo no es «que nos entren»
+
+Análisis para decidir el punto 2 de la entrada de abajo. Datos del servidor medidos hoy,
+no supuestos. **No se ha creado ningún token ni se ha tocado nada del servidor.**
+
+### Qué es `lizar` realmente (y una corrección mía)
+
+Escribí abajo «una credencial en una máquina compartida». **Es falso, y lo escribí sin
+mirar.** Comprobado:
+
+```
+LIZAR-1, entro como root. Únicos usuarios con shell real: root (y sync, de sistema).
+SSH: solo clave. passwordauthentication=no, permitrootlogin=without-password.
+fail2ban activo, ufw activo.
+Expuesto a internet: 22, 80, 443 (nginx). Todo lo demás en 127.0.0.1.
+14 contenedores en marcha: operator, panel, recepcion247, correo, informes,
+  auditoria, turnosmart, demora, clon, geoscanner, transcriptor, asisteweb,
+  n8n, postgres.
+Ya hay 3 ficheros .env, entre ellos /opt/agents/agentes-lizar/.env.
+```
+
+No es una máquina compartida: es **el servidor de producción de LIZAR entero**, de un
+solo usuario, razonablemente endurecido.
+
+### El punto que cambia la pregunta
+
+La pregunta era «¿tenemos riesgo de que nos entren por tener el token?». **No.** Un
+fichero con una credencial no escucha en ningún puerto ni acepta conexiones: no abre
+ninguna puerta nueva. No cambia la probabilidad de intrusión, cambia **el botín** si
+alguien ya entró.
+
+Y el botín ya es grande sin el token: ese servidor guarda los `.env` de los agentes
+(Supabase, WhatsApp Business, etc.), la base de datos y n8n. **Quien consiga root ahí ya
+tiene el negocio.** Un token de GitHub de SOLO LECTURA acotado a 17 repos le añadiría
+poder leer ese código. Es un incremento real pero pequeño frente a lo que ya hay, y no
+permite escribir, ni borrar, ni tocar ajustes.
+
+### La distinción que sí es crítica
+
+- **Fine-grained, Contents: Read-only, 17 repos, con caducidad** → incremento pequeño.
+- **Classic token con scope `repo`** → lectura Y ESCRITURA sobre TODOS los repos, incluso
+  los que no están en el índice. Con eso se puede hacer push a `kangurea-web`, que
+  publica al sitio vivo. Eso ya no es filtración: es cadena de suministro. **Nunca.**
+
+### Alternativa que no necesita token (mejor, y más trabajo)
+
+**Webhooks:** que GitHub avise al servidor cuando un repo cambia, en vez de que el
+servidor pregunte. El servidor no necesita credencial de lectura ninguna; nginx ya está
+en el 443. El secreto pasa a ser el de firma del webhook, que solo sirve para falsificar
+avisos de «ha cambiado algo» — no para leer código. Invierte el riesgo. Cuesta
+configurar 17 webhooks y un endpoint.
+
+### Y un aviso que este repo debería saber mejor que nadie
+
+Un token caduca. El día que caduque, el índice pasará a «no se pudo consultar» y seguirá
+arrancando **como si no pasara nada**. Es exactamente el modo de fallo que llevamos un
+mes cazando. Si se pone token, la caducidad tiene que doler: aviso explícito y distinto
+de «sin red», no un silencio más.
+
+### Pendientes
+
+1. **DESBLOQUEADO (decisión de Oscar, no técnica) — elegir vía: fine-grained read-only
+   o webhooks.** Ninguna se implementa: la implementación es funcionalidad y la cubre el
+   congelado. Solo hay que decidir cuál, para no diseñar dos veces.
+2. **EN ESPERA — que el fallo por token caducado sea ruidoso.** Va con la
+   implementación, congelada.
+
 ## 2026-08-29 — [PC viejo] DISEÑO (de Oscar): que el índice lo calcule el servidor, no cada cliente. El coste pasa de lineal en N a constante
 
 Idea de Oscar al leer la medición de la entrada de abajo, y es la buena. No se
@@ -72,9 +139,12 @@ una etapa que desaparece.
 
 **El servidor NO tiene credenciales para los repos privados.** Comprobado contra
 `agentes-lizar` (privado): falla. Hoy solo vería los públicos, que es justo lo contrario
-de lo que hace falta. Requiere un token de solo-lectura en el servidor, y eso es una
-credencial en una máquina compartida: hay que decidir alcance y dónde vive. **No se toca
-en esta sesión.**
+de lo que hace falta. Requiere un token de solo-lectura en el servidor: hay que decidir
+alcance y dónde vive. **No se toca en esta sesión.**
+
+*(Corregido el mismo día: aquí puse «una credencial en una máquina compartida». Es
+falso y lo escribí sin comprobarlo — en `lizar` solo `root` tiene shell. El análisis
+real, con los datos del servidor medidos, en la entrada de arriba.)*
 
 Es también, en pequeño, el mecanismo que `CLAUDE.md` dejó pendiente el 18-ago
 («detección automática contra la API de GitHub»). Mismo sitio, mismo token.
