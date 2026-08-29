@@ -742,25 +742,20 @@ fi
 
 # Foto de esta máquina al servidor, y lectura de la de las otras. Una sola llamada SSH.
 if usa_flota && [ -n "$FLOTA_SSH" ] && hay_tiempo 5; then
-  # Los hooks se sacan con grep y no con un parser de JSON a propósito: aquí solo hacen
-  # falta los NOMBRES de los eventos cableados, y meter python/jq en el arranque añade
-  # un proceso, una dependencia y un escapado que ya falló una vez en el primer intento.
-  SETTINGS="$HOME/.claude/settings.json"
-  HOOKS_PUESTOS="ninguno"
-  if [ -f "$SETTINGS" ]; then
-    HOOKS_PUESTOS=$(grep -oE '"(SessionStart|SessionEnd|UserPromptSubmit|PreCompact|Stop|PreToolUse|PostToolUse)"[[:space:]]*:' "$SETTINGS" 2>/dev/null \
-      | tr -d '":' | sed 's/[[:space:]]*$//' | sort -u | tr '\n' ',' | sed 's/,$//')
-    [ -z "$HOOKS_PUESTOS" ] && HOOKS_PUESTOS="ninguno"
-  else
-    HOOKS_PUESTOS="sin settings.json"
+  # La foto la hace un script aparte porque se llama desde DOS sitios: aquí (arranque,
+  # que siempre dispara) y desde SessionEnd (que recoge lo cambiado DURANTE la sesión,
+  # que el arranque no puede ver). Duplicar el código en los dos sería garantizar que
+  # se separen.
+  FOTO_SH=""
+  for f in "$HOME/repos/bitacora-project/scripts/foto-config.sh" \
+           "$(dirname "$0")/../scripts/foto-config.sh"; do
+    [ -f "$f" ] && { FOTO_SH="$f"; break; }
+  done
+
+  OTRAS=""
+  if [ -n "$FOTO_SH" ]; then
+    OTRAS=$(BITACORA_FOTO_MOMENTO=arranque timeout "$(tope 6)" bash "$FOTO_SH" --con-otras 2>/dev/null || true)
   fi
-
-  FOTO="maquina: $ETIQUETA
-hooks: $HOOKS_PUESTOS
-$(grep -E '^[A-Z_]+=' "$CONF" 2>/dev/null | sed 's/[[:space:]]*#.*$//; s/^/conf /' | sort)"
-
-  OTRAS=$(printf '%s\n' "$FOTO" | timeout "$(tope 6)" ssh -o ConnectTimeout=4 -o BatchMode=yes "$FLOTA_SSH" \
-    "mkdir -p /opt/bitacora/estado/maquinas && cat > /opt/bitacora/estado/maquinas/'$ETIQUETA'.txt && grep -H '' /opt/bitacora/estado/maquinas/*.txt 2>/dev/null" 2>/dev/null || true)
 
   if [ -z "$OTRAS" ]; then
     saltado "foto de configuración entre máquinas: el servidor no respondió a tiempo"
@@ -768,12 +763,13 @@ $(grep -E '^[A-Z_]+=' "$CONF" 2>/dev/null | sed 's/[[:space:]]*#.*$//; s/^/conf 
     # Solo se cuenta lo de LAS OTRAS máquinas: la propia ya la tienes delante.
     DIF=$(printf '%s\n' "$OTRAS" | grep -v "/maquinas/$ETIQUETA\.txt:" | sed 's|^/opt/bitacora/estado/maquinas/||; s|\.txt:| | ')
     if [ -n "$DIF" ]; then
-      SALIDA="${SALIDA}=== QUE TIENE CONFIGURADO LA OTRA MAQUINA (foto que dejo al arrancar) ===
+      SALIDA="${SALIDA}=== QUE TIENE CONFIGURADO LA OTRA MAQUINA ===
 $(printf '%s\n' "$DIF" | sanear_delimitadores)
 
-Es una FOTO del ultimo arranque de esa maquina, no su estado ahora. Sirve para ver que
-hooks tiene cableados y que variables lleva, sin entrar en ella. Si algo no cuadra con lo
-tuyo, eso explica que a una le llegue algo y a la otra no.
+Cada foto lleva su FECHA en la linea 'foto tomada'. MIRALA antes de fiarte: es el estado
+de esa maquina en ese instante, no ahora. Se rehace al arrancar y al cerrar sesion alli,
+asi que una foto de hace dias significa que esa maquina no se ha usado desde entonces --
+no que su configuracion siga siendo esa.
 
 "
     fi
