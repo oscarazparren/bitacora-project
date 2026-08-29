@@ -11,6 +11,63 @@ Formato: `## AAAA-MM-DD — [dispositivo] titular`
 
 ---
 
+## 2026-08-29 — [PC viejo] Al retirar el tercer hook se perdió una función y NADIE lo notó. La justificación de la retirada era falsa, y esta sesión lo demuestra
+
+Lo levantó Oscar, no yo, y llevaba un día activo.
+
+### Qué se perdió
+
+Ayer se retiraron tres hooks y se dijo que la regla «un chat por repo» los sustituía. Es
+verdad para `sessionstop-comprobar.sh`. **Es falso para `userpromptsubmit-contexto.sh`**,
+que hacía algo que ninguna regla nueva cubre: medir el peso de la sesión y avisar de
+cuándo sale a cuenta cortar, con dos umbrales calibrados (2 MB / 3,5 MB).
+
+Los hooks cubrían **dos ejes distintos**:
+
+- *dónde* trabajar → un chat por repo. **Trasladado ayer.**
+- *cuánto* aguantar antes de cortar → umbrales de peso. **Perdido ayer, sin sustituto.**
+
+Al escribir la entrada de ayer se trataron como si fueran el mismo eje.
+
+### La justificación era falsa, y se puede demostrar
+
+Ayer se escribió: «un chat por repo se mantiene corto solo, sin necesitar esa heurística
+de megabytes». **Esta misma sesión la desmiente**: 0,9 MB y 208 turnos **sin salir de
+`bitacora-project` ni una sola vez**. La regla del repo nunca se disparó porque nunca
+hubo motivo, y aun así la sesión creció. Un chat por repo acota el eje equivocado.
+
+Que todavía no haya cruzado el umbral de 2 MB es suerte: **no había nadie mirando**.
+
+### El daño concreto, en esta sesión
+
+Le recomendé a Oscar «baja a Sonnet ahora». Con el razonamiento que el propio hook
+retirado llevaba escrito, ese consejo es **caro**: cambiar de modelo pierde la caché de
+prompt, y cortar la sesión la pierde igualmente, así que cambiar ahora paga el peaje dos
+veces. Lo correcto es cortar y cambiar en el mismo gesto. **La función perdida no era
+solo un aviso: era la que hacía correcto el consejo de modelo.**
+
+### Arreglado
+
+Sección nueva en `CLAUDE.md`, «Cuándo sale a cuenta cortar la sesión», con los dos
+umbrales, la orden para medir, y el REGALO DEL CORTE explícito. Incluye por qué se
+escribe: que la justificación de ayer era falsa y qué sesión lo demostró.
+
+### La lección, que es la quinta variante del mismo fallo
+
+Van: el silencio (el sistema sabe algo y no lo dice), el log que mentía, el FRENO FALSO
+(una entrada correcta que paró trabajo bueno), y ahora **la retirada que se lleva por
+delante una función que nadie echa en falta porque nadie la estaba mirando**. Al quitar
+algo hay que enumerar TODO lo que hacía y decir, pieza por pieza, quién lo hereda. Ayer
+se enumeró una de dos y la otra se dio por cubierta sin comprobarlo.
+
+**Y no lo detectó el sistema: lo detectó Oscar acordándose.** Esa es la parte incómoda.
+
+### Pendiente
+
+1. **DESBLOQUEADO — `CLAUDE.md` de esta máquina ya tiene la sección; la del PC Nuevo
+   no.** El PC Nuevo reconstruyó ayer sus secciones a mano desde esta bitácora, así que
+   esta le va a faltar igual. Que la copie de aquí, no de memoria.
+
 ## 2026-08-29 — [PC viejo] CIRCUITO CERRADO: GitHub avisa y el servidor se entera. Y el fallo de en medio fue pegar el comando en la máquina equivocada
 
 El webhook de `bitacora-project` está creado (id `671838034`, activo, entrega `200`) y el
