@@ -694,6 +694,94 @@ Quítala de tu bitacora.conf para no volver a leerla creyendo que hace algo.
   fi
 fi
 
+# ---------- 2c. Configuración: comparar con el .example y con la otra máquina ----------
+# Idea de Oscar (29-ago-2026), y tapa un agujero medido ESE MISMO DÍA: la configuración
+# de cada máquina NO viaja por git, así que un `git pull` trae el script nuevo y deja la
+# conf vieja. Pasó TRES VECES en un solo día en el PC Nuevo -- faltaron PRESUPUESTO,
+# CARPETA_TECHO y CARPETA_MAX_CHARS por la mañana; ESTADO_REMOTO a mediodía; y por la
+# tarde sobraba MAX_LINEAS y faltaban las dos FLOTA_*. Las tres veces el hook siguió
+# funcionando SIN DECIR NADA, porque todas las variables tienen valor por defecto.
+# Ese es justo el modo de fallo que este proyecto persigue, en versión configuración.
+#
+# El aviso de MAX_LINEAS de la sección 2 hacía esto mismo, pero cableado a UNA variable.
+# Aquí se generaliza: se comparan todas, contra el .example que acaba de traerse el pull.
+#
+# Parte LOCAL: cero red, cero latencia, y sola ya habría cazado los tres despistes.
+# Parte REMOTA: deja la foto de esta máquina en el servidor y lee la de las demás. Es
+# best-effort de verdad -- si no hay presupuesto o el servidor no contesta, se dice y se
+# sigue. Nunca puede tumbar el arranque.
+#
+# NO se copia settings.json tal cual A PROPÓSITO: es un sitio legítimo donde meter claves
+# de API en variables de entorno, y un fichero con una clave dentro, subido a un sitio
+# compartido, se queda ahí. Se manda solo lo derivado: qué hooks hay cableados. De
+# bitacora.conf sí van nombre y valor, que por diseño no lleva secretos.
+CONF_EXAMPLE=""
+for c in "$HOME/repos/bitacora-project/bitacora.conf.example" \
+         "$(dirname "$0")/../bitacora.conf.example"; do
+  [ -f "$c" ] && { CONF_EXAMPLE="$c"; break; }
+done
+
+if [ -f "$CONF" ] && [ -n "$CONF_EXAMPLE" ]; then
+  vars_de() { grep -oE '^[A-Z_]+=' "$1" 2>/dev/null | tr -d '=' | sort -u; }
+  FALTAN=$(comm -13 <(vars_de "$CONF") <(vars_de "$CONF_EXAMPLE") | tr '\n' ' ')
+  SOBRAN=$(comm -23 <(vars_de "$CONF") <(vars_de "$CONF_EXAMPLE") | tr '\n' ' ')
+
+  if [ -n "${FALTAN// /}" ] || [ -n "${SOBRAN// /}" ]; then
+    SALIDA="${SALIDA}=== TU CONFIGURACION NO CUADRA CON LA VERSION QUE TIENES INSTALADA ===
+"
+    [ -n "${FALTAN// /}" ] && SALIDA="${SALIDA}  FALTAN en tu bitacora.conf (el .example las trae): $FALTAN
+"
+    [ -n "${SOBRAN// /}" ] && SALIDA="${SALIDA}  RETIRADAS, ya no hacen nada: $SOBRAN
+"
+    SALIDA="${SALIDA}  El hook funciona igual porque todo tiene valor por defecto -- por eso no se nota.
+  Compara con $CONF_EXAMPLE y ajusta $CONF.
+
+"
+  fi
+fi
+
+# Foto de esta máquina al servidor, y lectura de la de las otras. Una sola llamada SSH.
+if usa_flota && [ -n "$FLOTA_SSH" ] && hay_tiempo 5; then
+  # Los hooks se sacan con grep y no con un parser de JSON a propósito: aquí solo hacen
+  # falta los NOMBRES de los eventos cableados, y meter python/jq en el arranque añade
+  # un proceso, una dependencia y un escapado que ya falló una vez en el primer intento.
+  SETTINGS="$HOME/.claude/settings.json"
+  HOOKS_PUESTOS="ninguno"
+  if [ -f "$SETTINGS" ]; then
+    HOOKS_PUESTOS=$(grep -oE '"(SessionStart|SessionEnd|UserPromptSubmit|PreCompact|Stop|PreToolUse|PostToolUse)"[[:space:]]*:' "$SETTINGS" 2>/dev/null \
+      | tr -d '":' | sed 's/[[:space:]]*$//' | sort -u | tr '\n' ',' | sed 's/,$//')
+    [ -z "$HOOKS_PUESTOS" ] && HOOKS_PUESTOS="ninguno"
+  else
+    HOOKS_PUESTOS="sin settings.json"
+  fi
+
+  FOTO="maquina: $ETIQUETA
+hooks: $HOOKS_PUESTOS
+$(grep -E '^[A-Z_]+=' "$CONF" 2>/dev/null | sed 's/[[:space:]]*#.*$//; s/^/conf /' | sort)"
+
+  OTRAS=$(printf '%s\n' "$FOTO" | timeout "$(tope 6)" ssh -o ConnectTimeout=4 -o BatchMode=yes "$FLOTA_SSH" \
+    "mkdir -p /opt/bitacora/estado/maquinas && cat > /opt/bitacora/estado/maquinas/'$ETIQUETA'.txt && grep -H '' /opt/bitacora/estado/maquinas/*.txt 2>/dev/null" 2>/dev/null || true)
+
+  if [ -z "$OTRAS" ]; then
+    saltado "foto de configuración entre máquinas: el servidor no respondió a tiempo"
+  else
+    # Solo se cuenta lo de LAS OTRAS máquinas: la propia ya la tienes delante.
+    DIF=$(printf '%s\n' "$OTRAS" | grep -v "/maquinas/$ETIQUETA\.txt:" | sed 's|^/opt/bitacora/estado/maquinas/||; s|\.txt:| | ')
+    if [ -n "$DIF" ]; then
+      SALIDA="${SALIDA}=== QUE TIENE CONFIGURADO LA OTRA MAQUINA (foto que dejo al arrancar) ===
+$(printf '%s\n' "$DIF" | sanear_delimitadores)
+
+Es una FOTO del ultimo arranque de esa maquina, no su estado ahora. Sirve para ver que
+hooks tiene cableados y que variables lleva, sin entrar en ella. Si algo no cuadra con lo
+tuyo, eso explica que a una le llegue algo y a la otra no.
+
+"
+    fi
+  fi
+elif usa_flota && [ -n "$FLOTA_SSH" ]; then
+  saltado "foto de configuración entre máquinas: sin presupuesto de tiempo"
+fi
+
 # ---------- 3. Registro de ejecución (para poder demostrar que se dispara) ----------
 LOG="${BITACORA_LOG:-$HOME/.claude/bitacora-hook.log}"
 # El log registra el TIEMPO, no solo los bytes. Hasta el 28-ago-2026 solo decía
