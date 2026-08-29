@@ -135,3 +135,25 @@ BITACORA_RUTAS="$HOME/.claude/bitacora-rutas"
 # enseña igual (una de más pesa menos que enseñar cero).
 BITACORA_CARPETA_TECHO=3        # techo de entradas, antes de mirar el tamaño
 BITACORA_CARPETA_MAX_CHARS=2500 # techo de caracteres de esta sección
+
+# ---------- Aviso de coste de contexto (opcional) ----------
+# hooks/userpromptsubmit-contexto.sh: avisa cuando sale a cuenta cortar la
+# sesión y abrir otra. El umbral es de TOKENS de contexto, no de bytes del
+# transcript -- BITACORA_CONTEXTO_AVISO/URGENTE (en bytes) quedaron RETIRADAS
+# el 29-ago-2026; si las tienes puestas, el hook te avisa por stderr de que ya
+# no hacen nada.
+#
+# Por qué se retiraron, con el daño medido: el umbral de 2 MB correspondía a
+# sesiones de entre 58k y 394k tokens de contexto según el caso -- un factor
+# 6,8x de un lado a otro del mismo umbral (rho(MB, tokens) = 0,927: hay
+# correlación, pero no la precisión que hace falta para cortar en el momento
+# justo). La causa es que el peso en bytes mezcla bloques de pensamiento y
+# salidas de herramientas -- que engordan el fichero pero no todos entran en
+# el contexto que se reenvía -- con los tokens que sí se facturan cada turno.
+#
+# La métrica nueva suma cache_read_input_tokens + cache_creation_input_tokens +
+# input_tokens del último turno con "usage" en el transcript (output_tokens no
+# cuenta: no se reenvía). scripts/calibrar-umbral.py regenera esta distribución
+# sobre las sesiones que haya en disco, para recalibrar si hace falta.
+BITACORA_CONTEXTO_AVISO_TOKENS=250000    # ~250k: conviene ir cerrando
+BITACORA_CONTEXTO_URGENTE_TOKENS=400000  # ~400k: cerrar ya

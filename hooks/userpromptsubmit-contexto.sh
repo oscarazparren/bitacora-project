@@ -13,22 +13,34 @@
 # Llega un punto en que arrastrar el historial cuesta más de lo que aporta, y ahí
 # lo rentable es cortar: volcar a la bitácora y abrir sesión nueva leyéndola.
 #
-# Medido el 28-ago-2026 en kangurea-web: una sesión de trabajo real pesaba 2,5 MB
-# de transcript, y todo lo que valía la pena de ella cabía en las dos entradas de
-# bitácora que generó -- unos 4 KB. Compresión ~600:1. Lo que se tira es ruido
-# (comandos fallidos, salidas largas, rodeos), no señal.
+# MÉTRICA: TOKENS, NO MEGABYTES. Hasta el 29-ago-2026 el umbral era el peso en
+# bytes del fichero .jsonl (2 MB / 3,5 MB). Calibrado ese día sobre 56 sesiones
+# reales: el corte de 2 MB correspondía a contextos de entre 58k y 394k tokens
+# según la sesión -- un factor 6,8x de un lado a otro del mismo umbral. La razón
+# es que el peso en bytes mezcla dos cosas que no pesan igual: bloques de
+# pensamiento y resultados de herramientas (que sí engordan el fichero pero no
+# todos entran en el contexto que se reenvía) frente a los tokens de entrada que
+# de verdad se facturan y se reenvían cada turno. rho(MB, tokens) = 0,927 en esa
+# muestra: hay correlación, pero no la precisión que hacía falta para un umbral.
+#
+# La métrica correcta es la que ya reporta la API en cada turno: el campo "usage"
+# del ÚLTIMO mensaje de assistant con uso registrado. Se suman:
+#   cache_read_input_tokens + cache_creation_input_tokens + input_tokens
+# que es el contexto real que se reenvía en el turno siguiente. output_tokens NO
+# cuenta -- no se reenvía. Y input_tokens por sí solo es ruido: en la misma
+# muestra de 56 sesiones era el 0,0% del total, todo el peso está en los dos
+# campos de caché. scripts/calibrar-umbral.py regenera esta distribución sobre
+# las sesiones que haya en el disco en cada momento.
 #
 # Y NO ES SOLO DINERO: con el contexto cargado el agente falla más -- olvidos de
-# rutina, conclusiones dadas por verificadas sin estarlo. En esa misma sesión
-# pasaron las dos cosas. Un arranque limpio leyendo la bitácora tiene la misma
-# información útil con muchísimo menos ruido donde despistarse.
+# rutina, conclusiones dadas por verificadas sin estarlo.
 #
 # QUÉ HACE Y QUÉ NO. Mide y avisa; no decide. El umbral es una heurística, no una
 # fórmula: para calcular el punto exacto haría falta saber cuántos turnos quedan,
-# y eso no lo sabe nadie. Da los datos (peso, turnos, modelo en uso) e inyecta la
-# sugerencia; el agente decide si tiene sentido cortar AHÍ y si al abrir la nueva
-# conviene mantener o cambiar de modelo -- eso depende del trabajo que venga, que
-# el hook no puede saber.
+# y eso no lo sabe nadie. Da los datos (tokens de contexto, turnos, modelo en uso)
+# e inyecta la sugerencia; el agente decide si tiene sentido cortar AHÍ y si al
+# abrir la nueva conviene mantener o cambiar de modelo -- eso depende del trabajo
+# que venga, que el hook no puede saber.
 #
 # REGALO DEL CORTE: cambiar de modelo tiene un peaje (se pierde la caché de
 # prompt, que va ligada al modelo). Cortar la sesión tira esa caché igualmente,
@@ -45,14 +57,22 @@ CONF="${BITACORA_CONF:-$HOME/.claude/bitacora.conf}"
 # shellcheck disable=SC1090
 [ -f "$CONF" ] && . "$CONF"
 
-# Umbrales de peso del transcript, en bytes. Calibrados con sesiones reales de
-# kangurea-web: 734 KB (corta, cómoda), 2,5 MB (larga, ya con despistes), 4,3 MB
-# (muy pasada). Se avisa ANTES de llegar a incómodo, no cuando ya duele.
-AVISO="${BITACORA_CONTEXTO_AVISO:-2000000}"        # ~2 MB: conviene ir cerrando
-URGENTE="${BITACORA_CONTEXTO_URGENTE:-3500000}"    # ~3,5 MB: cerrar ya
+# Umbrales de TOKENS de contexto (no bytes). Calibrados el 29-ago-2026 sobre 56
+# sesiones reales -- ver la cabecera de este fichero para el porqué del cambio
+# de métrica, y scripts/calibrar-umbral.py para reproducir la calibración.
+AVISO="${BITACORA_CONTEXTO_AVISO_TOKENS:-250000}"     # ~250k: conviene ir cerrando
+URGENTE="${BITACORA_CONTEXTO_URGENTE_TOKENS:-400000}" # ~400k: cerrar ya
 # Para no repetir el aviso en cada mensaje una vez cruzado el umbral: se recuerda
 # a qué escalón se avisó por última vez en esta sesión.
 MARCAS="${BITACORA_CONTEXTO_MARCAS:-$HOME/.claude/bitacora-contexto-visto}"
+
+# BITACORA_CONTEXTO_AVISO/URGENTE (en bytes) quedaron RETIRADAS con este cambio.
+# Una variable que ya no hace nada tiene que decirlo -- ver la retirada de
+# BITACORA_MAX_LINEAS para el motivo: quien la tenga puesta cree que sigue
+# controlando el corte, y no controla nada.
+if [ -n "${BITACORA_CONTEXTO_AVISO:-}" ] || [ -n "${BITACORA_CONTEXTO_URGENTE:-}" ]; then
+  echo "AVISO bitacora: BITACORA_CONTEXTO_AVISO/URGENTE (bytes) ya no hacen nada -- las sustituyen BITACORA_CONTEXTO_AVISO_TOKENS/URGENTE_TOKENS. Quitalas de tu bitacora.conf." >&2
+fi
 
 entrada=$(cat)
 
@@ -67,11 +87,27 @@ sesion=$(printf '%s' "$entrada" | sed -n 's/.*"session_id"[[:space:]]*:[[:space:
 transcript=$(find "$HOME/.claude/projects" -maxdepth 2 -name "$sesion.jsonl" -type f 2>/dev/null | head -1)
 [ -n "$transcript" ] && [ -f "$transcript" ] || exit 0
 
-peso=$(wc -c < "$transcript" 2>/dev/null | tr -d ' ')
-[ -n "$peso" ] || exit 0
+# Último bloque "usage" del transcript: es el turno más reciente con coste
+# registrado. Se acota entre "usage":{ y "output_tokens_details" -- los tres
+# campos que hacen falta van siempre ahí delante, antes de esa clave, así que no
+# hace falta parsear JSON de verdad (nada de jq/node, ver cabecera). El objeto
+# "iterations" repite estos mismos nombres de campo más abajo en la misma línea,
+# por eso se acota la ventana en vez de buscar en la línea entera.
+ultima_usage=$(grep -oE '"usage":\{[^}]*"output_tokens_details"' "$transcript" 2>/dev/null | tail -1)
+[ -n "$ultima_usage" ] || exit 0
 
-if   [ "$peso" -ge "$URGENTE" ]; then escalon="urgente"
-elif [ "$peso" -ge "$AVISO" ];   then escalon="aviso"
+campo() {
+  printf '%s' "$ultima_usage" | sed -n "s/.*\"$1\":\([0-9]*\).*/\1/p"
+}
+in_tok=$(campo input_tokens)
+cache_creacion=$(campo cache_creation_input_tokens)
+cache_lectura=$(campo cache_read_input_tokens)
+[ -n "$in_tok" ] && [ -n "$cache_creacion" ] && [ -n "$cache_lectura" ] || exit 0
+
+tokens=$(( in_tok + cache_creacion + cache_lectura ))
+
+if   [ "$tokens" -ge "$URGENTE" ]; then escalon="urgente"
+elif [ "$tokens" -ge "$AVISO" ];   then escalon="aviso"
 else exit 0
 fi
 
@@ -86,13 +122,12 @@ printf '%s\t%s\n' "$sesion" "$escalon" >> "$MARCAS" 2>/dev/null
 turnos=$(grep -c '"type":"assistant"' "$transcript" 2>/dev/null || echo 0)
 modelo=$(grep -o '"model":"[^"]*"' "$transcript" 2>/dev/null | tail -1 | sed 's/.*:"//;s/"//')
 [ -n "$modelo" ] || modelo="desconocido"
-peso_mb=$(( peso / 100000 ))
-peso_mb="$(( peso_mb / 10 )),$(( peso_mb % 10 )) MB"
+tokens_k="$(( tokens / 1000 ))k tokens"
 
 if [ "$escalon" = "urgente" ]; then
-  cabecera="Esta sesión ya es MUY larga ($peso_mb, $turnos turnos). Cortar aquí sale claramente a cuenta."
+  cabecera="Esta sesión ya es MUY larga ($tokens_k de contexto, $turnos turnos). Cortar aquí sale claramente a cuenta."
 else
-  cabecera="Esta sesión se está haciendo larga ($peso_mb, $turnos turnos). Es buen momento para cortar."
+  cabecera="Esta sesión se está haciendo larga ($tokens_k de contexto, $turnos turnos). Es buen momento para cortar."
 fi
 
 # Instrucción para el agente, no texto para repetir literalmente.
