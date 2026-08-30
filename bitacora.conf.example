@@ -14,7 +14,26 @@ BITACORA_FICHERO="BITACORA.md"
 # arrancar. Las que no caben no se pierden: siguen en el fichero, y se avisa de
 # cuántas quedan y desde qué fecha. Sigue siendo un truncado ciego por antigüedad,
 # no recuperación por relevancia — eso sigue pendiente, ver README.
+#
+# OJO CON CUÁL ES LA PALANCA DEL TAMAÑO: esta variable NO lo es. Lo que de verdad
+# acota lo que se inyecta son los techos de caracteres de abajo (BITACORA_REPO_MAX_CHARS
+# y, por encima de todo, BITACORA_MAX_CHARS_TOTAL). Medido en el PC viejo sobre
+# agentes-lizar: bajar MAX_ENTRADAS de 5 a 4 no cambió NADA el tamaño de lo inyectado;
+# lo que sí lo metía dentro del límite era el techo de caracteres. Las entradas no
+# pesan igual, así que contarlas no acota nada por sí solo.
 BITACORA_MAX_ENTRADAS=5
+
+# Techo de CARACTERES de la sección 1 (bitácora del repo). Igual que con la carpeta
+# y la flota: las entradas no pesan igual, así que limitar solo por número (arriba)
+# no basta.
+BITACORA_REPO_MAX_CHARS=6000
+
+# Techo GLOBAL de caracteres de TODO lo que este hook inyecta, sumando todas las
+# secciones. Es la palanca que de verdad importa: Claude Code corta a este tamaño
+# lo que un hook puede entregar, y lo hace SIN AVISAR — pasarse no deja "un poco
+# menos de contexto", descarta el envío ENTERO. Medido: agentes-lizar llegó a pedir
+# 12.046 caracteres con la config por defecto y se perdió sin decir nada.
+BITACORA_MAX_CHARS_TOTAL=10000
 
 # Cuánta bitácora de FLOTA (infraestructura, fuera de cualquier repo) se inyecta.
 #
@@ -45,6 +64,11 @@ BITACORA_IGNORAR="*/repos/referencia/*|*/repos/archivo/*|*/tools/*|*/node_module
 
 # ¿Crear BITACORA.md automáticamente en repos que no la tienen? si | no
 BITACORA_CREAR_SI_FALTA="si"
+
+# ¿Permitir anotar (scripts/anotar.sh) fuera de un repo git? si | no
+# Con "no" (el default), anotar.sh exige estar dentro de un repo git para saber
+# dónde escribir. Con "si", usa la carpeta actual tal cual.
+BITACORA_SIN_GIT="no"
 
 # ---------- Bitácora de flota (opcional) ----------
 # Para infraestructura que cruza varios repos y servidores, y no cabe en ninguno.
@@ -87,6 +111,20 @@ BITACORA_INDICE_REPOS=""
 # Si montas el índice SIN el receptor de webhooks, no habrá estado que leer y todos
 # los repos saldrán como "sin datos". El índice necesita las dos mitades.
 BITACORA_ESTADO_REMOTO="/opt/bitacora/estado/estado.txt"
+
+# ---------- Sincronización de webhooks (scripts/sincronizar-webhooks.sh) ----------
+# Rellena BITACORA_ESTADO_REMOTO leyendo los repos de la cuenta de GitHub y
+# cableando el webhook que los alimenta. Solo hace falta tocarlo si se monta el
+# índice desde cero o se amplía a otra cuenta.
+
+# Cuenta de GitHub cuyos repos se vigilan.
+BITACORA_CUENTA_GITHUB="oscarazparren"
+
+# Endpoint que recibe los webhooks de GitHub y el secreto para validarlos (en el
+# servidor de flota, no viaja por git). Toca credenciales: no cambiar sin saber
+# qué hay al otro lado.
+BITACORA_WEBHOOK_URL="https://n8n.lizaraia.com/gh-bitacora/"
+BITACORA_WEBHOOK_SECRETO="/opt/bitacora/config/webhook.secret"
 
 # Techo duro de entradas por repo que muestra la sección 1, aunque la fecha de la
 # última visita a ese repo (que da el índice) permita más. Cubre el caso de volver

@@ -722,16 +722,64 @@ for c in "$HOME/repos/bitacora-project/bitacora.conf.example" \
 done
 
 if [ -f "$CONF" ] && [ -n "$CONF_EXAMPLE" ]; then
+  BASE_DIR="$(dirname "$CONF_EXAMPLE")"
   vars_de() { grep -oE '^[A-Z_]+=' "$1" 2>/dev/null | tr -d '=' | sort -u; }
-  FALTAN=$(comm -13 <(vars_de "$CONF") <(vars_de "$CONF_EXAMPLE") | tr '\n' ' ')
+  FALTAN_RAW=$(comm -13 <(vars_de "$CONF") <(vars_de "$CONF_EXAMPLE"))
   SOBRAN=$(comm -23 <(vars_de "$CONF") <(vars_de "$CONF_EXAMPLE") | tr '\n' ' ')
 
-  if [ -n "${FALTAN// /}" ] || [ -n "${SOBRAN// /}" ]; then
+  # Corregido 30-ago-2026: de las que faltan en tu conf, solo importan las que
+  # CAMBIAN algo de verdad. Si el default que trae el código es igual al valor que
+  # documenta el .example, no tenerla puesta no cambia nada. Medido ese mismo día:
+  # de 11 claves listadas como "FALTAN", 10 tenían el mismo default que el .example
+  # y solo BITACORA_IGNORAR cambiaba comportamiento -- avisar de las otras 10 solo
+  # entrena a ignorar el aviso el día que sí importa.
+  default_del_codigo() {
+    local var="$1" patron m
+    patron='\$\{'"$var"':-[^}]*\}'
+    m=$(grep -rhoE "$patron" "$BASE_DIR/hooks" "$BASE_DIR/scripts" "$BASE_DIR/servidor" 2>/dev/null | head -1)
+    [ -z "$m" ] && return 1
+    m="${m#\$\{$var:-}"
+    m="${m%\}}"
+    printf '%s' "$m"
+  }
+  FALTAN=""
+  for v in $FALTAN_RAW; do
+    val_example=$(grep -E "^${v}=" "$CONF_EXAMPLE" | head -1 | sed -E "s/^${v}=//; s/[[:space:]]*#.*$//; s/^\"//; s/\"\$//")
+    val_codigo=$(default_del_codigo "$v")
+    if [ -n "$val_codigo" ] && [ "$val_codigo" = "$val_example" ]; then
+      continue
+    fi
+    FALTAN="$FALTAN $v"
+  done
+  FALTAN="${FALTAN# }"
+
+  # Dirección que faltaba (Hallazgo 2, diagnóstico 30-ago-2026): el chequeo de
+  # arriba solo miraba conf-vs-.example. Nunca avisaba de que el propio .example
+  # se hubiera quedado corto -- así estuvo BITACORA_MAX_CHARS_TOTAL, la palanca
+  # que de verdad acota el tamaño, sin documentar desde siempre. Se excluye la
+  # plomería interna que ningún caller pone en bitacora.conf porque el propio
+  # hook la fija por código (CONF, LOG, LEIDO, CONTEXTO_MARCAS, FLOTA_REPO,
+  # FOTO_MOMENTO -- este último SIEMPRE lo pisan sus dos callers, arranque/cierre,
+  # así que ponerlo en bitacora.conf no haría nada) y las retiradas de bytes, que
+  # ya avisan aparte cuando están puestas (MAX_LINEAS, CONTEXTO_AVISO,
+  # CONTEXTO_URGENTE).
+  EXCLUIR_INTERNAS="BITACORA_CONF BITACORA_LOG BITACORA_LEIDO BITACORA_CONTEXTO_MARCAS BITACORA_FLOTA_REPO BITACORA_FOTO_MOMENTO BITACORA_MAX_LINEAS BITACORA_CONTEXTO_AVISO BITACORA_CONTEXTO_URGENTE"
+  VARS_CODIGO=$(grep -rhoE '\$\{BITACORA_[A-Z_]+' "$BASE_DIR/hooks" "$BASE_DIR/scripts" "$BASE_DIR/servidor" 2>/dev/null | sed 's/^\${//' | sort -u)
+  SIN_DOCUMENTAR=""
+  for v in $VARS_CODIGO; do
+    case " $EXCLUIR_INTERNAS " in *" $v "*) continue ;; esac
+    grep -q "^${v}=" "$CONF_EXAMPLE" || SIN_DOCUMENTAR="$SIN_DOCUMENTAR $v"
+  done
+  SIN_DOCUMENTAR="${SIN_DOCUMENTAR# }"
+
+  if [ -n "${FALTAN// /}" ] || [ -n "${SOBRAN// /}" ] || [ -n "${SIN_DOCUMENTAR// /}" ]; then
     SALIDA="${SALIDA}=== TU CONFIGURACION NO CUADRA CON LA VERSION QUE TIENES INSTALADA ===
 "
-    [ -n "${FALTAN// /}" ] && SALIDA="${SALIDA}  FALTAN en tu bitacora.conf (el .example las trae): $FALTAN
+    [ -n "${FALTAN// /}" ] && SALIDA="${SALIDA}  FALTAN en tu bitacora.conf, con valor DISTINTO al default del codigo: $FALTAN
 "
     [ -n "${SOBRAN// /}" ] && SALIDA="${SALIDA}  RETIRADAS, ya no hacen nada: $SOBRAN
+"
+    [ -n "${SIN_DOCUMENTAR// /}" ] && SALIDA="${SALIDA}  El CODIGO las lee pero el .example no las documenta (bug del proyecto, no tuyo): $SIN_DOCUMENTAR
 "
     SALIDA="${SALIDA}  El hook funciona igual porque todo tiene valor por defecto -- por eso no se nota.
   Compara con $CONF_EXAMPLE y ajusta $CONF.

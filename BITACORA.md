@@ -11,6 +11,54 @@ Formato: `## AAAA-MM-DD — [dispositivo] titular`
 
 ---
 
+## 2026-08-30 — [PC viejo] La comprobación de configuración era ciega en una dirección
+
+Diagnóstico hecho desde otra sesión (`LIZAR-AIA-WEB`) al ver que el hook avisaba de
+**11 claves que faltan** en `~/.claude/bitacora.conf`. Comprobado una a una contra el
+default del código: **10 de las 11 no cambiaban nada** (mismo valor que trae el
+código por defecto). Solo `BITACORA_IGNORAR` era una diferencia real. Un aviso que
+lista once cuando importa una entrena a ignorarlo — justo lo que este proyecto
+existe para evitar.
+
+**La causa de fondo**: la sección 2c (añadida el 29-ago) solo comparaba
+`bitacora.conf` contra `bitacora.conf.example` en una dirección — qué le falta al
+conf. Nunca miraba la contraria: qué lee el CÓDIGO que el `.example` no documenta.
+Por ahí se coló `BITACORA_MAX_CHARS_TOTAL`, la palanca que de verdad acota el
+tamaño total inyectado (comentario del PC viejo, `~/.claude/bitacora.conf`, ya
+avisaba de haberse equivocado una vez confundiéndola con `MAX_ENTRADAS`) — sin
+documentar desde que existe. Junto a ella: `BITACORA_REPO_MAX_CHARS`,
+`BITACORA_SIN_GIT`, `BITACORA_CUENTA_GITHUB`, `BITACORA_WEBHOOK_URL` y
+`BITACORA_WEBHOOK_SECRETO`.
+
+**Arreglado en dos sitios:**
+
+1. `bitacora.conf.example` documenta ahora esas seis claves.
+2. `hooks/sessionstart-leer.sh`, sección 2c: la comparación de FALTAN ahora compara
+   el default embebido en el código con el valor del `.example`, y solo avisa si
+   DIFIEREN de verdad (antes avisaba de cualquier ausencia, sin mirar si cambiaba
+   algo). Se añadió una comprobación nueva, código-vs-`.example`, que avisa cuando
+   el código lee una clave que el `.example` no documenta — el hueco que dejó pasar
+   `MAX_CHARS_TOTAL`. Verificado con una ejecución real del hook: antes de este
+   cambio habría señalado 6 claves sin documentar; después, cero.
+
+**Se excluyó a propósito de la comprobación nueva**: `BITACORA_FOTO_MOMENTO`.
+Estaba en la lista de "importa documentar" del diagnóstico inicial, pero al mirar
+el código sus dos únicos callers (`sessionstart-leer.sh` y `sessionend-foto.sh`)
+SIEMPRE lo fijan por código (`arranque`/`cierre`) antes de invocar
+`foto-config.sh` — ponerlo en `bitacora.conf` no tendría ningún efecto. Es plomería
+interna, como `BITACORA_CONF`, `_LOG`, `_LEIDO`, `_CONTEXTO_MARCAS` y
+`_FLOTA_REPO`, que por el mismo motivo tampoco se documentan.
+
+**En la máquina (fuera del repo, no viaja por git):** `~/.claude/bitacora.conf`
+(PC viejo) ya tenía el comentario de `BITACORA_INDICE_REPOS` podrido — decía
+"DESACTIVADO DE URGENCIA" mientras el valor de la línea de abajo ya estaba activo
+desde que la sección 0 pasó a leer `estado.txt` en una sola llamada SSH. Corregido
+el comentario, y añadida `BITACORA_IGNORAR` con el valor completo del `.example`
+(sin ella, abrir sesión en `repos/referencia/`, `repos/archivo/` o `tools/` habría
+creado un `BITACORA.md` ahí — hoy sin daño porque esas carpetas no existían en esta
+máquina, pero la trampa estaba armada). **Pendiente: repetir estos dos cambios de
+conf en el PC Nuevo**, que tiene su propio fichero y no se ve desde aquí.
+
 ## 2026-08-30 — [PC viejo] El aviso de corte de sesión pasa de MB a tokens de contexto
 
 `hooks/userpromptsubmit-contexto.sh` avisaba mirando el peso en bytes del `.jsonl`
