@@ -72,7 +72,9 @@ terminado.** Lo que hay funciona; lo que falta está identificado y documentado.
 | Rechazo de credenciales antes de escribir | ✅ En `anotar.sh` |
 | Commit y subida automáticos al anotar | ✅ En `anotar.sh` desde el 2026-08-25 — antes escribía en local y decía «anotado» |
 | Esquema con ciclo de vida de decisiones | 📄 Especificado, sin validador todavía |
-| **Escritura automática (`PreCompact`, `SessionEnd`)** | ❌ **No implementado** — hoy anotar depende de que el agente se acuerde |
+| Auditoría de sesiones que cerraron sin anotar | ✅ `scripts/auditar-sesiones.sh`, en el arranque desde el 2026-09-01. Mira el **artefacto** (commits que tocan la bitácora), no un registro de «hecho» |
+| Borrador mecánico de la sesión, para reconstruirla | ✅ `scripts/borrador-sesion.sh` desde el 2026-09-01. **Local, nunca commiteado, sin coste de modelo** — prompts literales, ficheros escritos, comandos y commits |
+| **Que el agente escriba la entrada solo** | ❌ **No implementado, y no por descuido.** `PreCompact` y `SessionEnd` no pueden hacer que el agente escriba (son *side-effect only*), y un hook no redacta. Hoy hay auditoría + borrador; **la entrada la sigue escribiendo el agente** |
 | Un fichero por entrada (`.bitacora/`) | ❌ Hoy es un `BITACORA.md` único: conflicto de merge si dos máquinas anotan el mismo día |
 | Lectura selectiva por relevancia | ❌ Hoy es `head -40`, truncado ciego que degrada con cada entrada |
 | Linter de decisiones (ruta → decisión vigente) | ❌ Diseñado, sin construir |

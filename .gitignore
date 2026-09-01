@@ -23,6 +23,15 @@ BITACORA.md.lock
 bitacora.conf
 *.log
 
+# Borradores mecánicos de sesión (scripts/borrador-sesion.sh). Llevan prompts
+# literales, rutas y nombres de máquinas — el mapa operativo — y NUNCA se commitean.
+#
+# ESTA LÍNEA ES UN CINTURÓN, NO EL MECANISMO. Por defecto viven en $HOME/.claude/,
+# fuera de cualquier árbol de trabajo de git, precisamente para que "nunca commiteado"
+# no dependa de una línea que alguien puede borrar. Esto solo cubre el caso de que
+# alguien apunte BITACORA_BORRADORES aquí dentro.
+bitacora-borradores/
+
 # Documentos internos de proyecto, no parte del producto público
 bitacora-dossier*.md
 bitacora-dossier*.txt

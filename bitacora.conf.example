@@ -203,7 +203,8 @@ BITACORA_CONTEXTO_URGENTE_TOKENS=400000  # ~400k: cerrar ya
 # 1-sep-2026: al arrancar, mira los commits que tocan el fichero de bitácora y los
 # transcripts del disco, y avisa de qué sesiones de este repo cerraron sin dejar
 # entrada. Es la pieza que faltaba -- hasta ella nadie podía decir "esta sesión no
-# anotó" sin un bucle a mano. SOLO INFORMA: no escribe borradores ni toca el repo.
+# anotó" sin un bucle a mano. El auditor SOLO LEE: no escribe en ningún repo (quien
+# prepara el borrador es la sección de abajo, y tampoco escribe en el repo).
 #
 # Es LOCAL (git log + find + awk, cero red) pero cuesta ~3,8 s, así que corre
 # DENTRO del presupuesto del hook (BITACORA_PRESUPUESTO, arriba): si no queda
@@ -219,3 +220,40 @@ BITACORA_AUDITORIA_GRACIA_MIN=5      # margen para considerar que otra sesión C
 # hooks/sessionend-anotar.sh en cada cierre. Rara vez se tocan.
 BITACORA_PROYECTOS="$HOME/.claude/projects"
 BITACORA_REGISTRO_SESIONES="$HOME/.claude/bitacora-sesiones"
+
+# ---------- Borrador mecánico de sesión (opcional) ----------
+# scripts/borrador-sesion.sh, del 1-sep-2026. Cuando el auditor de arriba encuentra
+# una sesión sin anotar, esto redacta -- sin modelo, sin coste, sin red -- la MATERIA
+# PRIMA para reconstruirla: los prompts literales, los ficheros escritos, los comandos
+# y los commits de la ventana. Se dispara en dos sitios: la sección 1c del hook de
+# arranque (para las sesiones que ya cerraron) y SessionStart(compact), que es el único
+# evento capaz de hablarle al agente justo después de que una compactación se lleve por
+# delante el detalle de lo hecho.
+#
+# NO ESCRIBE EN LA BITÁCORA, NUNCA. Los hooks ejecutan comandos, no redactan, y el
+# borrador lleva prompts literales, rutas y nombres de máquinas: el "mapa operativo"
+# que NO es una credencial y por eso pasa entero por el filtro de secretos. Si tu
+# registro va a un repositorio público, auto-commitear eso es el peor fallo disponible.
+#
+# POR ESO EL DESTINO POR DEFECTO ESTÁ FUERA DE CUALQUIER ÁRBOL DE TRABAJO DE GIT, y
+# conviene que siga así: "nunca commiteado" es entonces estructural, no una línea de
+# .gitignore que alguien puede borrar o que un `git add -f` se salta. Además el
+# borrador es una vista derivada del transcript, que ya vive en $HOME/.claude/ con las
+# mismas protecciones: dejarlo ahí no expone nada nuevo; moverlo al repo, sí.
+# Si aun así lo apuntas dentro de un repo, ignóralo en el .gitignore de ESE repo.
+BITACORA_BORRADORES="$HOME/.claude/bitacora-borradores"
+
+# Techos. Un prompt puede ser un log pegado de 300 KB, y un borrador que no cabe en
+# pantalla no lo lee nadie -- la misma avería que el truncamiento ciego de lectura, en
+# el otro extremo del tubo. Cuando recorta, el propio borrador dice cuánto falta y qué
+# variable subir. Medido el 1-sep: una sesión de 335 turnos y 2,1 MB de transcript da
+# un borrador de 22 KB con estos valores.
+BITACORA_BORRADOR_MAX_PROMPTS=60         # mensajes de usuario que entran, del primero en adelante
+BITACORA_BORRADOR_MAX_CHARS_PROMPT=4000  # por mensaje; lo que pase de aquí se corta Y SE DICE
+BITACORA_BORRADOR_MAX_COMANDOS=80        # comandos de Bash/PowerShell (solo la primera línea de cada uno)
+
+# Cuántos borradores prepara COMO MUCHO un arranque (sección 1c). Uno nuevo cuesta
+# 1-3 s del BITACORA_PRESUPUESTO de arriba; uno ya escrito, ~0,4 s (es idempotente:
+# el transcript de una sesión cerrada no cambia). Si sobran deudas, se dice en el
+# aviso de "ESTA LECTURA VA INCOMPLETA" -- no se recorta en silencio.
+BITACORA_BORRADOR_MAX_POR_ARRANQUE=2

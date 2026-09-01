@@ -36,6 +36,10 @@ MAX_CHARS_TOTAL="${BITACORA_MAX_CHARS_TOTAL:-10000}"    # lo que Claude Code adm
 VISTO="${BITACORA_VISTO:-$HOME/.claude/bitacora-visto}"
 LEIDO="${BITACORA_LEIDO:-$HOME/.claude/bitacora-leido}"  # cuándo se LEYÓ la bitácora de cada repo (ruta<TAB>corte<TAB>última lectura). Distinto de $VISTO, que son los SHA del índice: ver sección 1
 RUTAS="${BITACORA_RUTAS:-$HOME/.claude/bitacora-rutas}"
+# Cuántos borradores mecánicos se preparan como MUCHO en un arranque (sección 1c). Uno
+# nuevo cuesta 1-3 s del PRESUPUESTO; uno ya escrito, ~0,4 s. Si sobran deudas se dice
+# con saltado(), no se recorta en silencio.
+BORRADOR_MAX_POR_ARRANQUE="${BITACORA_BORRADOR_MAX_POR_ARRANQUE:-2}"
 
 SALIDA=""
 
@@ -47,6 +51,7 @@ SALIDA=""
 ENTRADA_STDIN=$(cat 2>/dev/null || true)
 SOURCE=$(printf '%s' "$ENTRADA_STDIN" | sed -n 's/.*"source"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)
 SESION_ID=$(printf '%s' "$ENTRADA_STDIN" | sed -n 's/.*"session_id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)
+TRANSCRIPT_ACTUAL=$(printf '%s' "$ENTRADA_STDIN" | sed -n 's/.*"transcript_path"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)
 
 # En 'compact' este hook HACE DAÑO, y está diagnosticado (BITACORA.md, 1-sep-2026).
 # SessionStart(compact) salta JUSTO DESPUÉS de una compactación -- es decir, justo
@@ -61,13 +66,82 @@ SESION_ID=$(printf '%s' "$ENTRADA_STDIN" | sed -n 's/.*"session_id"[[:space:]]*:
 # es lo correcto. 'resume' y 'fork' se dejan como estaban -- no son el bug que se
 # viene a arreglar hoy.
 #
-# Para el diseño de la escritura automática (BITACORA.md, 1-sep): este es el punto
-# donde 'compact' tendrá que enganchar cuando exista esa pieza. De momento se sale
-# -- pero se DEJA CONSTANCIA en el log, que un salto en silencio es justo el fallo
-# que este proyecto persigue.
+# AQUÍ ENGANCHA LA ESCRITURA AUTOMÁTICA (BITACORA.md, 1-sep-2026), y es el ÚNICO
+# sitio donde puede. `PreCompact` no admite additionalContext y `SessionEnd` tampoco:
+# ninguno de los dos puede hacer que el agente escriba. `SessionStart(compact)` sí, y
+# llega en el instante exacto en que hace falta -- la compactación se acaba de llevar
+# por delante el detalle de lo hecho, que es justo la materia prima de la entrada.
+#
+# Lo que se hace aquí, y solo esto: escribir el borrador MECÁNICO de esta sesión desde
+# su transcript (que sigue entero en disco, la compactación no lo toca) e inyectar su
+# RUTA. Nada más. NO se reinyecta la bitácora, NO se toca $VISTO ni $LEIDO, y NO se
+# escribe una línea en ningún BITACORA.md -- los hooks no redactan, y el borrador lleva
+# el mapa operativo que no puede acabar en un repo público.
+#
+# 'clear' NO entra aquí a propósito: /clear vacía el contexto y ahí reinyectar SÍ es lo
+# correcto. 'resume' y 'fork' se dejan como estaban -- no eran el bug de aquel día.
 if [ "$SOURCE" = "compact" ]; then
   LOG="${BITACORA_LOG:-$HOME/.claude/bitacora-hook.log}"
-  echo "$(date '+%Y-%m-%d %H:%M:%S') | cwd=$PWD | source=compact | SALTADO (no se reinyecta bitácora tras compactar)" >> "$LOG" 2>/dev/null
+  NOTA_COMPACT="sin borrador"
+
+  # El transcript viene en stdin; si no viniera, se reconstruye por la convención de
+  # nombres de Claude Code (la misma que usa auditar-sesiones.sh). Adivinar una ruta y
+  # callarse sería el fallo de siempre, así que si no sale ninguna, se dice en el log.
+  T_ACTUAL="$TRANSCRIPT_ACTUAL"
+  if [ -z "$T_ACTUAL" ] && [ -n "$SESION_ID" ]; then
+    PROY="${BITACORA_PROYECTOS:-$HOME/.claude/projects}"
+    T_ACTUAL="$PROY/$(printf '%s' "$(pwd -W 2>/dev/null || pwd)" | sed 's#[:/\\]#-#g')/$SESION_ID.jsonl"
+  fi
+
+  BORRADOR_SH=""
+  for base in "$HOME/repos/bitacora-project/scripts" "$(dirname "$0")/../scripts"; do
+    [ -f "$base/borrador-sesion.sh" ] && { BORRADOR_SH="$base/borrador-sesion.sh"; break; }
+  done
+
+  RUTA_B=""
+  if [ -n "$BORRADOR_SH" ] && [ -n "$T_ACTUAL" ]; then
+    # --rehacer porque esta sesión sigue VIVA: su transcript crece, y un borrador de
+    # hace dos compactaciones describiría media sesión. Es la única llamada del sistema
+    # que lo pide; las de la sección 1c son de sesiones cerradas y no cambian.
+    RUTA_B=$(timeout 12 bash "$BORRADOR_SH" "$T_ACTUAL" "$PWD" --rehacer 2>/dev/null | tail -1)
+    [ -n "$RUTA_B" ] && [ -f "$RUTA_B" ] || RUTA_B=""
+  fi
+
+  if [ -n "$RUTA_B" ]; then
+    NOTA_COMPACT="borrador=$RUTA_B"
+    printf '%s' "=== BITÁCORA: acabas de compactar, y eso se lleva la materia prima de la entrada ===
+
+La compactación ha reducido tu contexto a propósito, así que el detalle de lo que
+llevas hecho en esta sesión ya no lo tienes delante -- y es justo lo que hace falta
+para anotar antes de cerrar. El transcript sí sigue entero en disco, así que se ha
+escrito un BORRADOR MECÁNICO de esta sesión desde él:
+
+  $RUTA_B
+
+Lleva los prompts literales, los ficheros escritos, los comandos y los commits de la
+ventana. Ábrelo con Read cuando vayas a anotar.
+
+NO es una entrada: no hay modelo detrás, nadie ha decidido qué de eso importa, y
+\`descartado\` va vacío a propósito porque no se puede derivar de ningún artefacto.
+NO SE COMMITEA NUNCA -- lleva el mapa operativo (rutas, máquinas, prompts literales),
+que no es una credencial y por eso pasa entero por el filtro de secretos. Por eso vive
+fuera del árbol de trabajo de git. Cuando la entrada esté escrita, bórralo.
+
+(La bitácora del repo NO se reinyecta aquí: la leíste al abrir la sesión y acabas de
+compactar precisamente por tamaño.)" | node -e "
+let d='';
+process.stdin.on('data', c => d += c);
+process.stdin.on('end', () => {
+  if (!d.trim()) process.exit(0);
+  console.log(JSON.stringify({
+    systemMessage: 'Bitácora: borrador mecánico de esta sesión listo tras compactar.',
+    hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext: d }
+  }));
+});
+" 2>/dev/null
+  fi
+
+  echo "$(date '+%Y-%m-%d %H:%M:%S') | cwd=$PWD | source=compact | SALTADO (no se reinyecta bitácora) | $NOTA_COMPACT" >> "$LOG" 2>/dev/null
   tail -50 "$LOG" > "$LOG.tmp" 2>/dev/null && mv "$LOG.tmp" "$LOG"
   exit 0
 fi
@@ -657,19 +731,27 @@ fi
 # dejar entrada. Hasta hoy nadie -- ni el sistema ni nosotros -- podía responder a
 # "¿esta sesión anotó?" sin un bucle a mano.
 #
-# v1 SOLO INFORMA: no escribe borradores, no toca ningún repo. Y aunque el auditor
-# es LOCAL (git log + find + awk, cero red), cuesta ~3,8 s medidos, así que va
-# DENTRO del presupuesto de esta cabecera: si no queda tiempo se dice con saltado()
-# y no se corre. Meter 3,8 s a ciegas en un hook con plazo duro de 45 s es
-# literalmente cómo murió el hook el 28-ago (cuarto fallo silencioso).
+# El auditor NO TOCA NINGÚN REPO: solo lee. Y aunque es LOCAL (git log + find + awk,
+# cero red), cuesta ~3,8 s medidos, así que va DENTRO del presupuesto de esta
+# cabecera: si no queda tiempo se dice con saltado() y no se corre. Meter 3,8 s a
+# ciegas en un hook con plazo duro de 45 s es literalmente cómo murió el hook el
+# 28-ago (cuarto fallo silencioso).
 #
 # Se excluye la sesión actual ($SESION_ID): sigue viva y todavía puede anotar. El
 # auditor además la descartaría por reciente, pero pasarlo explícito no cuesta nada.
+#
+# DESDE EL 1-SEP TAMBIÉN SE PREPARA EL BORRADOR. Cuando el auditor encuentra deuda,
+# scripts/borrador-sesion.sh escribe —fuera del repo, en $HOME/.claude/— la materia
+# prima de esa sesión: prompts literales, ficheros escritos, comandos y commits. Aquí
+# solo se inyecta la RUTA, nunca el contenido: el borrador lleva el "mapa operativo" y
+# ocupa decenas de KB, o sea que meterlo en cada arranque reventaría MAX_CHARS_TOTAL
+# —que descarta el envío ENTERO y sin avisar— y encima repetiría en el contexto lo que
+# el agente solo necesita si va a reconstruir esa sesión.
 if [ -n "$RAIZ" ] && [ -n "$MOSTRAR" ] && [ -f "$F" ]; then
-  AUDITOR=""
-  for a in "$HOME/repos/bitacora-project/scripts/auditar-sesiones.sh" \
-           "$(dirname "$0")/../scripts/auditar-sesiones.sh"; do
-    [ -f "$a" ] && { AUDITOR="$a"; break; }
+  AUDITOR=""; BORRADOR_SH=""
+  for base in "$HOME/repos/bitacora-project/scripts" "$(dirname "$0")/../scripts"; do
+    [ -z "$AUDITOR" ] && [ -f "$base/auditar-sesiones.sh" ] && AUDITOR="$base/auditar-sesiones.sh"
+    [ -z "$BORRADOR_SH" ] && [ -f "$base/borrador-sesion.sh" ] && BORRADOR_SH="$base/borrador-sesion.sh"
   done
 
   if [ -n "$AUDITOR" ]; then
@@ -681,15 +763,68 @@ if [ -n "$RAIZ" ] && [ -n "$MOSTRAR" ] && [ -f "$F" ]; then
         DEUDA=$(printf '%s\n' "$AUD" | grep '^SIN-ANOTAR ' || true)
         if [ -n "$DEUDA" ]; then
           N_DEUDA=$(printf '%s\n' "$DEUDA" | grep -c '^SIN-ANOTAR ' || true)
+
+          # ---- Borradores para esa deuda ----
+          # La ruta del transcript viene del bloque "PENDIENTES DE ANOTAR" del auditor,
+          # que ya la trae. Se lee de ahí en vez de reconstruirla: dos sitios calculando
+          # la misma ruta se separan en cuanto uno cambie, y entonces el borrador
+          # describiría una sesión distinta de la que el auditor acusa.
+          BORRADORES_LISTOS=""; N_BORR=0
+          if [ -n "$BORRADOR_SH" ]; then
+            while IFS= read -r pendiente; do
+              [ -n "$pendiente" ] || continue
+              # Cada borrador cuesta 1-3 s si es nuevo (~0,4 s si ya existía, que es el
+              # caso normal a partir del segundo arranque). El tope de dos NO es
+              # arbitrario: es lo que cabe sin comerse el presupuesto de la sección 2,
+              # y si sobran deudas SE DICE debajo en vez de recortar en silencio.
+              [ "$N_BORR" -ge "$BORRADOR_MAX_POR_ARRANQUE" ] && break
+              hay_tiempo 5 || { saltado "borradores de las sesiones sin anotar: sin presupuesto (quedan $(( N_DEUDA - N_BORR )))"; break; }
+              RUTA_B=$(timeout "$(tope 6)" bash "$BORRADOR_SH" "$pendiente" "$RAIZ" 2>/dev/null | tail -1)
+              if [ -n "$RUTA_B" ] && [ -f "$RUTA_B" ]; then
+                BORRADORES_LISTOS="${BORRADORES_LISTOS}  - $RUTA_B
+"
+                N_BORR=$((N_BORR + 1))
+              fi
+            done <<EOF
+$(printf '%s\n' "$AUD" | sed -n 's/^  - .* — \(.*\.jsonl\)$/\1/p')
+EOF
+          fi
+
           SALIDA="${SALIDA}=== AUDITORÍA: $N_DEUDA sesión(es) de este repo cerraron SIN ANOTAR ===
 $(printf '%s' "$DEUDA" | sanear_delimitadores)
 
 Lo dice el auditor mirando los commits que tocan $FICHERO, no un registro de
-\"hecho\". Si reconoces alguna, reconstrúyela desde su transcript y anótala ahora.
-Si de verdad no hubo nada que anotar en ella, no hace falta hacer nada -- pero
-míralo, no lo des por hecho.
+\"hecho\". Si reconoces alguna, reconstrúyela y anótala ahora. Si de verdad no hubo
+nada que anotar en ella, no hace falta hacer nada -- pero míralo, no lo des por hecho.
 
 "
+          if [ "$N_BORR" -gt 0 ]; then
+            SALIDA="${SALIDA}BORRADOR MECÁNICO listo para $N_BORR de ellas (ábrelo con Read):
+$BORRADORES_LISTOS
+Lo ha escrito un script del transcript: prompts literales, ficheros escritos,
+comandos y commits. NO es una entrada -- nadie ha decidido todavía qué de eso
+importa, y \`descartado\` va vacío a propósito porque no se puede derivar. Vive
+FUERA del repo y NO SE COMMITEA NUNCA: lleva el mapa operativo (rutas, máquinas,
+prompts) que no es una credencial y por eso pasa entero por el filtro de secretos.
+Cuando la entrada esté escrita, borra el borrador.
+
+"
+          elif [ -z "$BORRADOR_SH" ]; then
+            SALIDA="${SALIDA}(No encuentro scripts/borrador-sesion.sh, así que no hay borrador: tendrás que
+leer el transcript a mano.)
+
+"
+          else
+            # Está el script y hay deuda, pero no salió ni un borrador. Callarse aquí
+            # dejaría al agente creyendo que esta deuda no trae material -- cuando lo
+            # que pasa es que la pieza falló. Es la diferencia entre "no hay nada" y
+            # "no lo sé", que en este proyecto ya se ha confundido demasiadas veces.
+            SALIDA="${SALIDA}(Se intentó preparar el borrador mecánico de esa(s) sesión(es) y NO salió ninguno:
+el transcript puede no estar donde dice el auditor, o borrador-sesion.sh falló. Míralo
+a mano -- esto no quiere decir que no hubiera nada que anotar.)
+
+"
+          fi
         fi
       fi
     else

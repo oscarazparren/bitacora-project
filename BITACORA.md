@@ -11,6 +11,126 @@ Formato: `## AAAA-MM-DD — [dispositivo] titular`
 
 ---
 
+## 2026-09-01 — [PC Nuevo] El borrador mecánico existe, vive FUERA del repo, y `SessionStart(compact)` ya lo entrega
+
+La pieza que quedaba del diseño de esta mañana: `scripts/borrador-sesion.sh` +
+`scripts/borrador-leer-transcript.js`. Redacta —sin modelo, sin coste, sin red— la
+materia prima de una sesión leyendo su transcript y el `git log`. **En ningún
+`BITACORA.md` escribe nada, nunca.**
+
+### La decisión que más se pensó: dónde vive
+
+En `$HOME/.claude/bitacora-borradores/`, **fuera de cualquier árbol de trabajo de git**,
+y no en el repo detrás de un `.gitignore`. Tres razones, en orden de peso:
+
+1. **«Nunca commiteado» tiene que ser estructural, no una línea.** Una línea de
+   `.gitignore` la borra un editor descuidado, la salta un `git add -f`, y no existe en
+   una copia recién clonada. Es el criterio del propio `CLAUDE.md`: si cumplir la regla
+   exige acordarse, mecanismo. Fuera del árbol no hay nada que fallar.
+2. **No añade exposición nueva.** El borrador es una vista derivada del transcript, que
+   ya está en `$HOME/.claude/projects/` con el mismo contenido y las mismas
+   protecciones. Dejarlo ahí no mueve nada de sitio; **meterlo en el repo sería la
+   primera vez que el mapa operativo entra en un árbol de trabajo de git.**
+3. Es donde ya vive el resto del estado del sistema (`bitacora-sesiones`,
+   `bitacora-visto`, `bitacora-leido`, `bitacora-rutas`).
+
+En el `.gitignore` hay igualmente una línea `bitacora-borradores/`, **etiquetada como
+cinturón y no como mecanismo**: solo cubre que alguien apunte `BITACORA_BORRADORES`
+dentro de un repo.
+
+### Qué lleva, y el hueco que se deja vacío a propósito
+
+Seis secciones: identidad de la sesión (con **¿anotó? medido contra el artefacto**),
+**los prompts del usuario literales**, ficheros escritos, comandos ejecutados, commits
+de la ventana y estado del repo. Y la sexta es `descartado`, **vacía y explicando por
+qué lo está**: lo que se descartó no deja artefacto —no hay commit de lo que no se
+hizo— y rellenarlo con algo verosímil es la forma exacta de los cuatro fallos
+silenciosos. El borrador señala el hueco; no lo finge.
+
+**Dos correcciones al diseño de esta mañana, las dos por no poder cumplirlo tal cual:**
+
+- El diseño pedía «lo que queda sucio **al cerrar**». **Eso no se puede tener**: el
+  borrador se escribe después, y `git status` solo sabe de ahora. En vez de colar el
+  estado de hoy como si fuera el del cierre, la sección lleva la edad de la sesión y
+  **avisa en grande cuando pasan de 15 minutos**. Un dato correcto presentado como
+  respuesta a otra pregunta es el fallo de siempre.
+- El diseño decía «ficheros tocados, de los `Edit`/`Write` del transcript». Contra
+  ficheros reales eso **miente por omisión**: la sesión de esta mañana hizo 57 llamadas
+  a `Bash` y solo 7 a `Edit`, o sea que casi todo su trabajo era invisible. Se añade la
+  lista de comandos (primera línea de cada uno) **y el hueco se dice dentro del propio
+  borrador**, junto a la sección que lo tiene.
+
+### Los dos disparos
+
+- **Arranque (sección 1c).** Cuando el auditor canta `SIN-ANOTAR`, se prepara el
+  borrador de esa sesión y **se inyecta solo la RUTA, nunca el contenido**: el borrador
+  ocupa decenas de KB y pasarse de `MAX_CHARS_TOTAL` descarta el envío ENTERO sin
+  avisar. La ruta del transcript se lee del bloque `PENDIENTES` del auditor en vez de
+  reconstruirla: dos sitios calculando la misma ruta se separan en cuanto uno cambie, y
+  entonces el borrador describiría una sesión distinta de la que el auditor acusa.
+- **`SessionStart(compact)`**, que es el punto que quedó marcado con un comentario en el
+  hook. Y ahí está su valor de verdad: **la compactación se lleva por delante justo el
+  detalle que hace falta para anotar**, mientras que el transcript sigue entero en
+  disco. Se escribe el borrador (`--rehacer`: la sesión sigue viva y su transcript
+  crece) y se inyectan 1.352 bytes con la ruta. **Sigue sin reinyectarse la bitácora y
+  sin tocarse `$VISTO` ni `$LEIDO`** — comprobado por `mtime` antes y después.
+
+### `node`, y no `awk`
+
+No añade dependencia: `node` ya es requisito documentado y `sessionstart-leer.sh` no
+puede emitir su JSON sin él. A cambio se gana lo único irreemplazable del fichero: **los
+prompts literales**. Desescapar JSON a mano en `awk` (`\"`, `\`, `\n`, `\uXXXX`)
+corrompería en silencio justo el campo que no se puede reconstruir de ningún otro sitio.
+
+**Y dos procesos, no ocho.** La primera versión pedía a `node` cada campo y cada sección
+por separado: **3,5 s**. Uno extrae y otro compone: **1,1 s**, y **0,44 s** si el
+borrador ya existe (atajo por glob del id corto, antes de arrancar nada). Es la lección
+del auditor otra vez —lo caro no es el trabajo, son los procesos— y aquí no es
+cosmética: el hook de arranque ya se pasó de presupuesto dos veces esta mañana.
+
+### El bug que solo aparece en Windows
+
+`MSYS2_ENV_CONV_EXCL='*'` en la llamada a `node`. Git Bash **traduce las variables de
+entorno que parecen rutas POSIX** antes de dárselas a un binario de Windows, y
+`node.exe` lo es: `B_RAIZ=/c/Users/…` le llegaba como `C:/Users/…`, y el borrador salía
+con una ruta que el script nunca había escrito. Trivial en consecuencia, **idéntico en
+mecanismo** a lo que este proyecto persigue: un dato transformado en silencio.
+
+### Probado
+
+Contra transcripts reales: las **dos deudas conocidas** (`AlcoholTax-IA` 25-ago, 335
+turnos, 2,1 MB → borrador de 22 KB; `lizar-informes` 27-ago) y la sesión de esta mañana.
+Degenerados: fichero vacío, basura sin JSON, sin marcas de tiempo, fuera de git, sin
+argumentos, transcript inexistente — **todos salen con código 0, sin escribir y
+diciendo por qué**. Y los casos que importan de verdad, con fixtures a medida:
+`tool_result` NO se cuela como prompt, `Read` NO cuenta como fichero escrito, las
+vallas ` ``` ` dentro de un prompt no rompen el bloque, los `\n` de un comando
+multilínea no arrastran la segunda línea, y las líneas ilegibles **se cuentan y se
+dicen** en vez de saltarse.
+
+Las dos ramas de fallo del hook, provocadas a mano: sin `borrador-sesion.sh` dice que no
+lo encuentra; con él pero sin borrador, dice que se intentó y no salió. **Ninguna de las
+dos calla** — la diferencia entre «no hay nada» y «no lo sé» es medio proyecto.
+
+Coste del arranque en el repo con deuda: **19 s / 25 s de presupuesto, `ok`**, con el
+borrador nuevo incluido. Y el aviso de drift de la sección 2c volvió a hacer su trabajo:
+cantó las 5 variables nuevas sin documentar en el mismo momento de estrenarlas.
+
+### Se adelanta al plazo del propio diseño, y conviene decirlo
+
+El diseño de esta mañana ponía el borrador **detrás de dos semanas midiendo**. Se
+construye antes porque el auditor ya trajo el dato que faltaba —**dos deudas reales, de
+hace días, que nadie sabía**— y porque esta pieza no puede causar el quinto fallo: no
+escribe en ningún repo, no manda nada por red, y lo peor que hace es dejar un fichero de
+20 KB en `$HOME` que nadie lee.
+
+### Siguiente
+
+Medir. Ahora hay las dos mitades —quién no anotó y con qué reconstruirlo— y **ninguna se
+ha usado todavía en caliente**. Lo que falta saber es si el agente, al ver la ruta,
+abre el borrador y escribe la entrada; y si el hueco de `descartado` se rellena o se
+ignora. La pasada con modelo sigue fuera, y ahora sí se podrá decidir con números.
+
 ## 2026-09-01 — [PC Nuevo] El auditor ya está cableado al arranque, y `sessionstart-leer.sh` por fin distingue `source`
 
 Los dos puntos de "Siguiente" de la entrada de abajo, hechos en el mismo cambio a
@@ -2011,7 +2131,6 @@ Anotado por si alguien más repite el mismo tipo de prueba y se confunde igual.
 al leerse, no cuando alguien lo lee de verdad — ver la nota de campo. Y la migración
 de quien usaba el fork suelto a esta versión configurable queda para otra entrada.
 
-
 ## 2026-08-18 — [PC viejo] Truncar en silencio, en los dos extremos del tubo
 
 Un día de uso real ha dado tres notas de campo. Las tres son la misma familia de fallo:
@@ -2052,7 +2171,6 @@ Su peaje también está medido: **~2.500 tokens fijos de entrada por sesión** e
 registro central y el del repo. Como argumento de «ahorro de tokens» no se sostiene, y
 conviene no venderlo así. Lo que sí se sostiene: trabajo que no se repite, y trampas que
 no se vuelven a pagar.
-
 
 ## 2026-08-16 — [PC viejo] Revisión del plan de Fase 1: no hace falta migrar los cinco repos a la vez
 
