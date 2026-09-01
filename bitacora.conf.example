@@ -193,5 +193,5 @@ BITACORA_CARPETA_MAX_CHARS=2500 # techo de caracteres de esta sección
 # input_tokens del último turno con "usage" en el transcript (output_tokens no
 # cuenta: no se reenvía). scripts/calibrar-umbral.py regenera esta distribución
 # sobre las sesiones que haya en disco, para recalibrar si hace falta.
-BITACORA_CONTEXTO_AVISO_TOKENS=250000    # ~250k: conviene ir cerrando
+BITACORA_CONTEXTO_AVISO_TOKENS=200000    # ~200k: conviene ir cerrando (bajado de 250k el 1-sep-2026)
 BITACORA_CONTEXTO_URGENTE_TOKENS=400000  # ~400k: cerrar ya

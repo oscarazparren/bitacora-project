@@ -11,6 +11,62 @@ Formato: `## AAAA-MM-DD — [dispositivo] titular`
 
 ---
 
+## 2026-09-01 — [PC Nuevo] El umbral de AVISO baja de 250.000 a 200.000 tokens: el hook se pone al día con CLAUDE.md
+
+Quedaba **pendiente y anotado como tal** en la BITACORA.md de `lizar-asistente-aula`
+(entrada del 1-sep): `CLAUDE.md` ya decía 200.000 desde el 31-ago, pero el hook seguía
+avisando a 250.000. Un umbral en la prosa y otro en el mecanismo — la prosa manda, pero
+el aviso automático llegaba tarde, que es justo para lo que existe el hook.
+
+`hooks/userpromptsubmit-contexto.sh` línea 63: `BITACORA_CONTEXTO_AVISO_TOKENS` pasa de
+`250000` a `200000`. **URGENTE se queda en 400.000**, que sigue viniendo de la
+calibración del 29-ago sobre 56 sesiones; lo que se recalibró fue solo el primer escalón.
+
+### Por qué 200.000, medido y no estimado
+
+Los números salen de las 6 sesiones reales de `lizar-asistente-aula` (1.154 turnos,
+26-31 ago), no de una intuición:
+
+- **El 58 % del gasto de aquel repo era `cache_read`** — o sea, releerse a sí mismo:
+  267 M tokens, 53,49 $ de los 92,35 $ del repo.
+- **Cortar ahorra el 77 %.** Los mismos 1.154 turnos: **142,04 $** en una sola sesión
+  frente a **36,70 $** cortando cada ~100 turnos.
+- **Dónde cae cada umbral.** Al ritmo medido (~900 tokens de contexto nuevos por turno),
+  250.000 equivalía al turno ~172 y 200.000 cae en el ~137.
+- **Por qué no se baja más.** El óptimo económico está en ~150.000, pero la curva es
+  plana entre 60 y 160 turnos, y por debajo de ~40 el **suelo de arranque** (~95.000
+  tokens que se recachean, 0,159 $ por corte) se repaga tantas veces que vuelve a
+  encarecer. 200.000 captura casi todo el ahorro sin entrar en ese tramo.
+
+### Se cambia en el repo, no en `bitacora.conf`, y esto es lo importante
+
+Tentación evidente: poner la variable en `~/.claude/bitacora.conf` y listo. **Sería
+peor.** Arreglaría esta máquina y dejaría al PC viejo avisando a 250.000, y **dos
+máquinas con umbrales distintos es peor que las dos con el umbral viejo** — el aviso
+dejaría de significar lo mismo según dónde estés sentado. El valor por defecto del
+script es lo único que viaja por git a las dos.
+
+Consecuencia práctica: **el otro PC no tiene que hacer nada manual.** Con `git pull` el
+umbral nuevo ya está activo. Solo hay que tocar `bitacora.conf` para querer un umbral
+distinto del de serie.
+
+### Cambios que acompañan
+
+- **El comentario de la línea cuenta ahora el porqué nuevo**, con los números de arriba
+  y de dónde salen. El de antes decía «calibrados el 29-ago sobre 56 sesiones» para los
+  dos umbrales, y eso ya solo vale para URGENTE: dejarlo habría hecho que el siguiente
+  que lo leyera atribuyera el 200.000 a una calibración que no lo produjo.
+- **`bitacora.conf.example` pasa también a 200000.** Documenta el valor por defecto, y
+  el `.example` es contra lo que la sección 2c de `sessionstart-leer.sh` compara la
+  configuración de cada máquina: dejarlo en 250000 habría convertido el fichero de
+  referencia en la fuente de una descuadre que el propio repo se dedica a detectar.
+
+### Comprobado, no supuesto
+
+El hook se ejecutó con un `HOME` de mentira y transcripts sintéticos en cuatro escalones:
+**190k calla, 200k avisa, 210k avisa, 410k da el aviso urgente.** El escalón de AVISO
+dispara donde debe y URGENTE sigue intacto.
+
 ## 2026-08-30 — [PC viejo] La comprobación de configuración era ciega en una dirección
 
 Diagnóstico hecho desde otra sesión (`LIZAR-AIA-WEB`) al ver que el hook avisaba de

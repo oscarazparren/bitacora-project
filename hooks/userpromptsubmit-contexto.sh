@@ -57,10 +57,25 @@ CONF="${BITACORA_CONF:-$HOME/.claude/bitacora.conf}"
 # shellcheck disable=SC1090
 [ -f "$CONF" ] && . "$CONF"
 
-# Umbrales de TOKENS de contexto (no bytes). Calibrados el 29-ago-2026 sobre 56
-# sesiones reales -- ver la cabecera de este fichero para el porqué del cambio
-# de métrica, y scripts/calibrar-umbral.py para reproducir la calibración.
-AVISO="${BITACORA_CONTEXTO_AVISO_TOKENS:-250000}"     # ~250k: conviene ir cerrando
+# Umbrales de TOKENS de contexto (no bytes). URGENTE sale de la calibración del
+# 29-ago-2026 sobre 56 sesiones reales -- ver la cabecera de este fichero para el
+# porqué del cambio de métrica, y scripts/calibrar-umbral.py para reproducirla.
+#
+# AVISO BAJÓ DE 250k A 200k EL 1-sep-2026, con las 6 sesiones reales de
+# lizar-asistente-aula (1.154 turnos, 26-31 ago). Los números: el 58 % del gasto
+# de aquel repo era cache_read -- releerse a sí mismo --, y cortar cada ~100
+# turnos deja los mismos 1.154 turnos en 36,70 $ en vez de 142,04 $ (77 % menos).
+# Al ritmo medido (~900 tokens de contexto nuevos por turno) 250k caía en el turno
+# ~172 y 200k cae en el ~137. No se baja más porque el suelo de arranque de una
+# sesión nueva (~95k tokens que se recachean, 0,159 $ por corte) se repaga tantas
+# veces por debajo de ~40 turnos que volvería a encarecer; el óptimo está en
+# ~150k, pero la curva es plana entre 60 y 160 turnos y 200k captura casi todo el
+# ahorro sin meterse en el tramo donde manda el suelo.
+#
+# El razonamiento completo, con el método, está en ~/.claude/CLAUDE.md, sección
+# "Cuándo sale a cuenta cortar la sesión", y en la BITACORA.md de
+# lizar-asistente-aula, entradas del 31-ago y del 1-sep-2026.
+AVISO="${BITACORA_CONTEXTO_AVISO_TOKENS:-200000}"     # ~200k: conviene ir cerrando
 URGENTE="${BITACORA_CONTEXTO_URGENTE_TOKENS:-400000}" # ~400k: cerrar ya
 # Para no repetir el aviso en cada mensaje una vez cruzado el umbral: se recuerda
 # a qué escalón se avisó por última vez en esta sesión.
