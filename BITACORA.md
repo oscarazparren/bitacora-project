@@ -11,6 +11,112 @@ Formato: `## AAAA-MM-DD — [dispositivo] titular`
 
 ---
 
+## 2026-09-01 — [PC Nuevo] El auditor ya corre y encuentra dos deudas reales — y de paso: el transcript NO está ordenado por fecha
+
+Construido el paso 1 del diseño de la entrada anterior: **`scripts/auditar-sesiones.sh`**
+(solo lee, no escribe nada en ningún repo) y **`hooks/sessionend-anotar.sh`** (una línea
+por cierre). El registrador ya está cableado en `settings.json` como **entrada propia**
+bajo `SessionEnd`, junto a la de la foto, no dentro de ella.
+
+### Dos deudas reales, comprobadas contra el log de commits
+
+- **`AlcoholTax-IA`, 25-ago, sesión de 335 turnos** cerrada a las 20:07. El último commit
+  de bitácora de ese día fue a las 09:52. Nada entre medias.
+- **`lizar-informes`, 27-ago, sesión de 43 turnos** cerrada a las 16:25. Último commit de
+  bitácora, 10:07.
+
+Las dos existían desde hace días y **nadie lo sabía**. Es exactamente el hueco que el
+auditor viene a tapar: no que el agente se olvide mucho, sino que cuando se olvida no
+queda rastro de que se olvidó.
+
+### El bug que solo aparece contra ficheros reales
+
+**El `.jsonl` de una sesión NO está en orden cronológico.** Una sesión REANUDADA escribe
+arriba la marca de reanudación y copia debajo la historia previa. Medido en
+`427e04d6`: **línea 1 = 14:04:21, línea 3 = 13:32:17.**
+
+La primera versión sacaba inicio y fin con `head -1` / `tail -1`. Con eso, esa sesión
+salía con **inicio == fin** y se declaraba `SIN-ANOTAR` siendo falso. Se arregla
+recorriendo el fichero y quedándose con el mínimo y el máximo (ISO 8601 se ordena como
+texto, así que comparar cadenas basta).
+
+Es la lección de siempre, cobrada otra vez: **probar contra el caso feliz inventado no
+sirve.** Contra los 64 transcripts del disco salió a la primera.
+
+### Sesiones ≠ conversaciones, y esto corrige un número que di esta misma mañana
+
+Al reanudar, Claude Code crea un fichero NUEVO con la conversación entera duplicada. En
+`lizar-asistente-aula` había **8 ficheros pero solo 4 conversaciones**:
+
+```
+08-26 11:17 -> 08-26 12:50   2128db5b  ┐ misma conversación
+08-26 11:17 -> 08-31 15:26   afec2dc1  ┘
+08-31 15:32 -> 08-31 16:03   ef7ca647  ┐
+08-31 15:32 -> 08-31 16:04   427e04d6  ├ misma conversación
+08-31 15:32 -> 08-31 17:48   c48e0681  ┘
+```
+
+Así que el «39 sesiones» y el «15 de 16» de la entrada anterior **cuentan ficheros, no
+conversaciones: el denominador está inflado.** La conclusión de fondo no cambia
+(compactaciones = 0, y anotar funciona hoy por prosa), pero el dato hay que leerlo así.
+
+### Cuatro estados, no tres
+
+El diseño decía tres. Contra datos reales hizo falta un cuarto: **`CONTINUADA`**. Sin él
+el auditor cantaba deuda **por cada corte de sesión** — o sea, castigaba justo la
+disciplina que queremos. De las 3 deudas que dio la primera versión, **2 eran conducta
+correcta**: un corte limpio (12:50 → 12:51) y una reanudación.
+
+Se distinguen dos causas a propósito, porque meterlas en una sola condición («alguien
+seguía trabajando cuando acabé») era tan ancha que una sesión larga y **concurrente**
+absorbía a todas las que solapaba y **habría tapado deuda real** — la dirección
+silenciosa. Ahora: `CADENA` = la siguiente arranca donde ésta acaba (±5 min);
+`REANUDADA` = otro fichero con el mismo arranque (±2 min) que termina más tarde.
+
+Y `CONTINUADA` se cuenta y se dice, no se esconde: colapsarla con `ANOTADA` sería el
+fallo de siempre.
+
+### El coste, que casi reconstruye la avería del 28-ago
+
+Primera versión: **9,7 s** en el repo más cargado (grep+sed+sort+grep -c = tres procesos
+por fichero). El hook de arranque tiene 25 s de presupuesto, la red ya se come 10-20 y el
+plazo duro son 45. **Meter ahí 9,7 s habría recreado literalmente el cuarto fallo
+silencioso desde la pieza que viene a impedirlo.**
+
+Bajado a **3,8 s** pasando a **un proceso por CARPETA** (un `find` + un `awk` sobre la
+lista entera) en vez de tres por fichero. Lo caro no era el trabajo, eran los procesos:
+en Git Bash cuestan más que lo que hacen, cosa que ya estaba escrita en la cabecera de
+`sessionstart-leer.sh` y que hubo que volver a aprender. **Los veredictos son idénticos
+antes y después**, comprobado.
+
+`sessionend-anotar.sh` va sin **un solo subproceso** en el camino normal (ni `cat`, ni
+`sed`, ni `date`: `read`, expansión de parámetros, `$EPOCHSECONDS` y `printf %()T`).
+Medido: **164 ms**, contra un presupuesto de `SessionEnd` que es de **1,5 s COMPARTIDOS**
+entre todos sus hooks — dato nuevo, y es el argumento de por qué no se cuelga de la foto:
+su `ssh` puede llevarse el presupuesto por delante.
+
+### Probado
+
+Auditor contra los 64 transcripts y las 13 bitácoras del disco; las dos deudas cotejadas
+a mano contra `git log`. Registrador con `HOME` de mentira y cuatro entradas: normal,
+sin campos, vacía y basura — las dos últimas salen con código 0 y **sin escribir**.
+`settings.json` validado con `node` tras el cambio.
+
+### Limitación conocida, y sale a la cara
+
+`kangurea-web` responde **`NO-SE-PUDO-COMPROBAR`**: sus sesiones se abrieron desde `~`,
+no desde el repo, así que no hay carpeta de transcripts que mirar. Es correcto y es el
+tercer estado haciendo su trabajo — dice «no sé mirarlo», no «no hay nada». Y es la cara
+visible de que **19 de 39 ficheros de sesión corren fuera de cualquier repo**: para ésos
+el auditor por repo es ciego, y el arreglo no es código, es «un chat por repo».
+
+### Siguiente
+
+1. Cablear el auditor en `sessionstart-leer.sh`, **respetando su presupuesto** (`tope()`,
+   `hay_tiempo()`, `saltado()` si no cabe) — 3,8 s no son gratis ahí.
+2. Que ese hook distinga `source`: hoy no lo mira, y en `compact` reinyecta 10.000
+   caracteres a un contexto recién compactado y consume el marcador del índice.
+
 ## 2026-09-01 — [PC Nuevo] La escritura automática NO se cuelga de `PreCompact`: ese evento lleva una semana muerto, y lo mató nuestra propia disciplina de corte
 
 Diseño decidido, sin código todavía. **Contradice a NOTAS-DE-CAMPO.md**, que desde el
