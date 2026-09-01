@@ -11,6 +11,144 @@ Formato: `## AAAA-MM-DD — [dispositivo] titular`
 
 ---
 
+## 2026-09-01 — [PC Nuevo] La escritura automática NO se cuelga de `PreCompact`: ese evento lleva una semana muerto, y lo mató nuestra propia disciplina de corte
+
+Diseño decidido, sin código todavía. **Contradice a NOTAS-DE-CAMPO.md**, que desde el
+principio ordena los disparos poniendo `PreCompact` el primero. Esa nota se escribió
+antes de que existiera la disciplina de cortar a 200.000 tokens; la disciplina funcionó,
+y al funcionar dejó sin disparos al mecanismo que se iba a construir encima.
+
+### Lo medido, que es lo que cambia el diseño
+
+- **`PreCompact` dispararía ~nunca.** 27 compactaciones históricas en esta máquina, la
+  última el **25-ago**. **Cero en las 39 sesiones desde el 26-ago.** Cortar antes de
+  200k evita la compactación por construcción.
+- **Anotar no está fallando hoy: 15 de 16.** Sesiones desde el 26-ago en repos con
+  bitácora, cruzadas con las entradas del mismo día. La única sin entrada tiene **0
+  turnos** (sesión abierta y cerrada). El agente se acuerda.
+- **Pero se acuerda por PROSA, no por mecanismo** (CLAUDE.md + el empujón del hook de
+  contexto). Por el criterio del propio CLAUDE.md —*si cumplir una regla exige detectar
+  un momento → mecanismo*— esa es la configuración frágil. Y lo decisivo: **hoy no
+  existe nada capaz de decir que una sesión terminó sin anotar.** Ese 15/16 lo he
+  contado yo con un bucle a mano; el sistema no lo sabe.
+- **19 de 39 sesiones corren fuera de cualquier repo** (`~`, `~/repos`, `C:\`). Ahí no
+  falta memoria: falta destino.
+
+### El error que cometí midiendo, que vale más que la medición
+
+Primero crucé las sesiones con el **`mtime` del `.jsonl`** en vez de con los timestamps
+de dentro. Salieron «4 sesiones sin entrada», entre ellas la de **4.112 turnos** de
+`agentes-lizar` — y lo dije en voz alta antes de comprobarlo. Es falso: esa sesión anotó
+(entrada del 25-ago y `docs(bitacora): cierre corto...` en el log). Su «todo guardado y
+subido» era cierto.
+
+**Estuve a punto de acusar de fallo silencioso a la única sesión que hizo las cosas
+bien, en la sesión en que venía a diseñar el mecanismo que lo impide.** El fallo es el
+de siempre —dar por bueno un indicador en vez de mirar el artefacto— y de ahí sale la
+regla nº2 de abajo, que ya no es teórica.
+
+### Restricciones comprobadas contra la documentación, no supuestas
+
+- **`PreCompact` y `SessionEnd` son side-effect only**: no admiten `additionalContext`,
+  no honran el código de salida 2, su stderr no llega al modelo. **No pueden hacer que
+  el agente escriba.** Esto tumba el diseño obvio de raíz.
+- Los únicos canales al agente son `SessionStart` y `UserPromptSubmit`, los dos ya
+  cableados y funcionando.
+- **`SessionStart` tiene matcher `compact`**: dispara justo DESPUÉS de compactar. Es el
+  canal que `PreCompact` no tiene. **`sessionstart-leer.sh` no lee `source` hoy**: corre
+  igual en `startup`, `resume`, `clear`, `compact` y `fork`.
+- **Los hooks de `SessionEnd` comparten un presupuesto colectivo de 1,5 s**, elevable
+  con `timeout` propio. El `ssh` de la foto puede dejar sin aire a cualquier otro hook
+  de cierre.
+
+De ahí la frase que ordena el diseño entero:
+
+> **La escritura nunca puede dispararse en el momento en que hace falta. Solo un momento
+> ANTES (`UserPromptSubmit`, con la sesión viva) o un momento DESPUÉS (`SessionStart`
+> siguiente, como deuda).**
+
+### El diseño
+
+**Qué dispara — tres piezas, cada una haciendo solo lo que puede.**
+
+1. **`SessionEnd` registra, no juzga.** Una línea en un registro local: sesión, cwd,
+   repo, timestamps, turnos, tokens, si compactó. **Sin una sola llamada a `git`**: con
+   1,5 s compartidos y un `ssh` al lado, cualquier subproceso es el quinto fallo
+   silencioso — y en Git Bash lanzar un proceso ya cuesta más que el trabajo que hace.
+2. **`SessionStart` audita y habla.** Decide si la sesión contó, comprobando el
+   **artefacto**: ¿hay commit que toque ese `BITACORA.md` dentro de la ventana? Si no,
+   inyecta la deuda. Local, sin red, dentro del `PRESUPUESTO` de 25 s ya existente.
+3. **`UserPromptSubmit` avisa a tiempo.** El aviso de 200k ya dice «anota antes de
+   cortar»; le falta el dato de si esta sesión **ya ha anotado o no**.
+
+**`PreCompact` se cablea igual, pero como red de seguridad barata**, no como pieza
+principal: cuatro líneas que marcan el registro, emparejadas con `SessionStart(compact)`
+que sí puede hablar. Degrada a nada mientras no haya compactaciones, que es el caso.
+
+**Qué escribe si el agente no ha dicho nada: en `BITACORA.md`, NADA. Nunca.** Los hooks
+no redactan, y **este repo es PÚBLICO**: un borrador hecho del transcript lleva prompts
+literales, rutas e infraestructura — el «mapa operativo» que NOTAS-DE-CAMPO ya avisa que
+**no es una credencial y por eso se cuela por el filtro de secretos**. Auto-commitear eso
+a un repo público sería el peor fallo disponible aquí, y automático.
+
+Lo que sí: un **borrador local, nunca commiteado**, mecánico y sin coste de modelo —
+commits de la ventana, ficheros tocados (de los `Edit`/`Write` del transcript), **los
+prompts del usuario literales** (son la intención y las correcciones, y no se derivan de
+ningún otro sitio) y lo que queda sucio al cerrar. Materia prima etiquetada como tal, no
+una entrada. **`descartado` no se puede generar mecánicamente y no se va a fingir que
+sí**: el borrador solo señala dónde estaría.
+
+**La pasada con modelo queda fuera de la v1 a propósito**: cuesta ~0,3-0,6 $ por sesión,
+exige guardia contra recursión (la subsesión dispara estos mismos hooks) y sobre todo
+**no se puede evaluar sin el auditor que diga cuántas veces hace falta**. La semana
+pasada: 1 vez de 16, y esa tenía 0 turnos.
+
+### Cómo se evita el quinto fallo silencioso
+
+Los cuatro anteriores comparten forma: **quien reporta el éxito es quien hizo el
+trabajo, y reporta el intento en vez del artefacto.**
+
+1. **Quien audita no es quien escribe.** La auditoría lee `git log` y el transcript del
+   disco; **nunca una marca de «hecho» dejada por `SessionEnd`**. Si el cierre no llegó
+   a correr —la X, un `kill`, la luz— reconstruye la deuda igual. Es la lección nº4
+   literal: el log que medía el éxito lo escribió un proceso que ya estaba muerto.
+2. **La evidencia es el artefacto**: «anotada» = existe commit que toca ese
+   `BITACORA.md` en la ventana. Ni «el hook corrió» ni «el agente dijo que anotó».
+3. **El plazo forma parte de la evidencia**: segundos contra presupuesto en cada línea.
+4. **Tres estados, nunca colapsados**: `ANOTADA` / `SIN-ANOTAR` /
+   `NO-SE-PUDO-COMPROBAR`. El tercero grita más que el segundo; hoy los tres se ven
+   igual, que es por lo que nadie sabe si esto funciona.
+5. **La deuda no se consume al leerla**: vive hasta que la resuelve un artefacto.
+   Cierra por fin el pendiente de *«un aviso que se consume al leerlo no es un aviso»*.
+6. **Se prueba contra los 64 transcripts y las 13 bitácoras reales del disco**, no
+   contra el caso feliz. Es la prueba que habría cazado el `awk` y el `printf`/`%`.
+7. **La v1 solo informa**: no escribe borradores ni toca ningún repo. Un auditor de solo
+   lectura no puede causar un quinto fallo — lo peor que hace es equivocarse en voz alta.
+
+### Va APARTE de `sessionend-foto.sh`, y el motivo es el presupuesto
+
+No se cuelga de la foto. La foto es **idempotente y auto-reparable** (si se pierde el
+disparo, el arranque siguiente la rehace); el registro es lo contrario, **su momento es
+irrepetible**. Meter lo que no se puede perder detrás de un `timeout 8 ... || true`
+pensado para lo que sí, es heredarle el manejo de errores flojo — y con 1,5 s
+compartidos, el `ssh` de la foto puede matarlo. Hook propio, `timeout` propio; corren en
+paralelo.
+
+### Bug latente que este diseño destapa, aún sin arreglar
+
+**`sessionstart-leer.sh` no mira `source`.** En cada compactación reinyecta hasta 10.000
+caracteres de bitácora a un contexto **recién compactado por grande**, y consume el
+marcador del índice — la avería de *«un aviso que se consume al leerlo»*, disparada por
+un evento que el usuario no ha pedido. Hoy no hace daño porque no hay compactaciones;
+en cuanto una sesión se escape del corte, sí.
+
+### Orden de construcción
+
+1. El auditor de solo lectura (`SessionEnd` registra + `SessionStart` audita e informa).
+2. Que `sessionstart-leer.sh` distinga `source`.
+3. Dos semanas midiendo. **Entonces** se decide si hace falta el borrador mecánico, con
+   el número de fallos reales delante — no antes.
+
 ## 2026-09-01 — [PC Nuevo] El umbral de AVISO baja de 250.000 a 200.000 tokens: el hook se pone al día con CLAUDE.md
 
 Quedaba **pendiente y anotado como tal** en la BITACORA.md de `lizar-asistente-aula`

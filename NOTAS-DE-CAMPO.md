@@ -129,6 +129,30 @@ Diseño correcto, de más a menos importante:
    ser una tarea de memoria y pasa a ser una de formato, que no puede fallar por
    contexto agotado.
 
+> ⚠️ **CORREGIDO el 01/09/2026, y el orden de arriba ya no vale.** Dos cosas, las dos
+> medidas:
+>
+> **1. `PreCompact` no puede hablarle al agente.** Comprobado contra la documentación:
+> `PreCompact` y `SessionEnd` son **side-effect only** — no admiten `additionalContext`,
+> no honran el código de salida 2 y su stderr no llega al modelo. Pueden ejecutar algo;
+> **no pueden pedirle a nadie que redacte**. Los únicos canales al agente son
+> `SessionStart` (que tiene matcher `compact`, o sea que dispara justo DESPUÉS de
+> compactar) y `UserPromptSubmit`.
+>
+> **2. `PreCompact` además ya casi no dispara**, y la culpa es nuestra: la disciplina de
+> cortar a 200.000 tokens evita la compactación por construcción. 27 compactaciones
+> históricas en el PC Nuevo, **la última el 25-ago; cero en las 39 sesiones siguientes**.
+> Esta nota se escribió antes de que esa disciplina existiera.
+>
+> La regla que sustituye al orden de arriba: **la escritura nunca puede dispararse en el
+> momento en que hace falta — solo un momento ANTES (`UserPromptSubmit`, con la sesión
+> viva) o un momento DESPUÉS (`SessionStart` siguiente, como deuda).** `PreCompact` sigue
+> cableándose, pero como red de seguridad barata, no como pieza principal.
+>
+> Lo que de esta nota SIGUE siendo cierto: pedirle prosa al agente al cerrar es mala
+> idea. Lo que era falso es que `PreCompact` fuera la salida. El diseño completo está en
+> la `BITACORA.md`, entrada del 1-sep.
+
 ---
 
 ## Un fichero único es un conflicto de merge garantizado
