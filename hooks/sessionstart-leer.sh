@@ -40,6 +40,12 @@ RUTAS="${BITACORA_RUTAS:-$HOME/.claude/bitacora-rutas}"
 # nuevo cuesta 1-3 s del PRESUPUESTO; uno ya escrito, ~0,4 s. Si sobran deudas se dice
 # con saltado(), no se recorta en silencio.
 BORRADOR_MAX_POR_ARRANQUE="${BITACORA_BORRADOR_MAX_POR_ARRANQUE:-2}"
+# El CLAUDE.md de esta máquina y la copia canónica compartida con las demás (sección 2d).
+# CANONICO va VACÍO por defecto a propósito: la ruta depende de cómo se llame el repo que
+# guarde esa copia, y este fichero no da por hecho ninguna organización concreta. Sin él,
+# la sección 2d no hace nada. LOCAL sí tiene default, porque esa ruta la fija Claude Code.
+CLAUDE_LOCAL="${BITACORA_CLAUDE_LOCAL:-$HOME/.claude/CLAUDE.md}"
+CLAUDE_CANONICO="${BITACORA_CLAUDE_CANONICO:-}"
 
 SALIDA=""
 
@@ -829,6 +835,188 @@ a mano -- esto no quiere decir que no hubiera nada que anotar.)
       fi
     else
       saltado "auditoría de sesiones sin anotar: sin presupuesto de tiempo para correrla"
+    fi
+  fi
+fi
+
+# ---------- 1d. CLAUDE.md: tu copia local contra la canónica ----------
+# VA AQUÍ Y NO JUNTO A 2c, QUE ES SU FAMILIA, POR UNA RAZÓN MEDIDA: el techo global de
+# la sección 4 recorta POR EL FINAL, y con esta sección colocada detrás de 2c el aviso
+# salió partido justo después de su titular en la primera prueba en vivo (10.514
+# caracteres contra un máximo de 10.000). Un aviso que se produce y no llega es el fallo
+# que persigue este repo, así que se pone por delante de todo lo voluminoso: la bitácora
+# de flota dice dónde leerse entera si la recortan, y esto no se puede leer en ningún
+# otro sitio. Cuesta 0,28 s cuando las dos copias cuadran, así que adelantarlo no
+# retrasa nada de lo que va detrás.
+#
+# Propuesto por Oscar el 29-ago-2026 en el config/README.md de bitacora-flota, y sin
+# construir hasta hoy. El 1-sep-2026 se vio para qué servía: la copia canónica llevaba
+# TRES DÍAS por detrás de la de esta máquina y ninguna de las dos lo sabía. Un fichero
+# que no se sincroniza no da error -- simplemente deja de aplicarse la regla que falta.
+#
+# Lo que esta sección NO hace es limitarse a decir "difieren". Dice EN QUÉ DIRECCIÓN, y
+# ese es el punto entero: ese mismo README mandaba `cp config/CLAUDE.md ~/.claude/` al
+# traer cambios, así que seguir la documentación al pie de la letra el 1-sep habría
+# machacado el fichero bueno con el viejo. Avisar de que difieren y callar cuál manda
+# deja al lector adivinando, y aquí la adivinanza documentada era la equivocada.
+#
+# Todo LOCAL: ni un ssh ni un fetch. Aun así va DENTRO del PRESUPUESTO de la cabecera,
+# igual que el auditor de la sección 1c, justo encima: si no queda tiempo, saltado().
+#
+# CÓMO SE DECIDE LA DIRECCIÓN, Y POR QUÉ EL MTIME NO BASTA: un `git pull` o un `cp`
+# reescriben el fichero y le ponen la hora de HOY sin que su contenido sea más nuevo,
+# o sea que la fecha miente justo en las dos operaciones que más se usan aquí. Lo que
+# no miente es la historia de git. Se calcula el blob de TU fichero y se busca entre
+# los commits del canónico:
+#   - Aparece    -> tu copia es una versión ANTERIOR del canónico. Vas por detrás, y
+#                   copiar canónico -> local es seguro: no pierdes nada.
+#   - No aparece -> tu copia lleva cambios que el repo no ha visto NUNCA. Copiar
+#                   canónico -> local los destruye. Solo aquí se mira la fecha, y solo
+#                   para separar "el tuyo es el nuevo" de "han cambiado los dos".
+# El caso ambiguo se DICE como ambiguo. Inventar una dirección sería peor que callarse.
+if [ -n "$CLAUDE_CANONICO" ]; then
+  if ! hay_tiempo 3; then
+    saltado "deriva de CLAUDE.md: sin presupuesto de tiempo para comprobarla"
+  elif [ ! -f "$CLAUDE_CANONICO" ]; then
+    SALIDA="${SALIDA}=== NO ENCUENTRO LA COPIA CANÓNICA DE CLAUDE.md ===
+BITACORA_CLAUDE_CANONICO apunta a $CLAUDE_CANONICO y ahí no hay nada. O el repo que la
+guarda no está clonado en esta máquina, o la ruta cambió. Mientras siga así, NADIE avisa
+si tu $CLAUDE_LOCAL se separa del de las demás máquinas.
+
+"
+  elif [ ! -f "$CLAUDE_LOCAL" ]; then
+    SALIDA="${SALIDA}=== ESTA MÁQUINA NO TIENE CLAUDE.md, Y HAY UNA COPIA CANÓNICA ===
+Falta $CLAUDE_LOCAL, o sea que trabajas SIN ninguna de las reglas que llevan las demás
+máquinas, y sin que nada dé error. Tráetelas:
+  cp '$CLAUDE_CANONICO' '$CLAUDE_LOCAL'
+Se lee al ARRANCAR la sesión: esta ya no las va a ver.
+
+"
+  else
+    DIR_C=$(dirname "$CLAUDE_CANONICO")
+    BASE_C=$(basename "$CLAUDE_CANONICO")
+    # La ruta relativa a la raíz del repo se saca con --show-prefix y NO con
+    # --show-toplevel: en Git Bash, --show-toplevel devuelve 'C:/Users/...' mientras que
+    # la ruta configurada es '/c/Users/...', así que recortar una de la otra no recorta
+    # nada y la ruta relativa saldría siendo la absoluta. Es el mismo peaje de
+    # traducción de rutas que ya mordió al borrador el 1-sep, en otra esquina.
+    PREFIJO=$(timeout "$(tope 4)" git -C "$DIR_C" rev-parse --show-prefix 2>/dev/null || true)
+    HASHES=""
+    # --path hace que el blob se calcule aplicando los atributos de git (aquí, la
+    # normalización de fin de línea de '*.md text'). Sin él, un CRLF en el árbol de
+    # trabajo daría un hash que no coincide con ninguno de la historia y el veredicto
+    # saldría al revés en la máquina equivocada.
+    [ -n "$PREFIJO" ] && HASHES=$(timeout "$(tope 4)" git -C "$DIR_C" hash-object --path "${PREFIJO}${BASE_C}" -- "$CLAUDE_LOCAL" "$CLAUDE_CANONICO" 2>/dev/null | tr '\n' ' ')
+    H_LOCAL=""; H_CANON=""
+    [ -n "$HASHES" ] && read -r H_LOCAL H_CANON <<<"$HASHES"
+
+    if [ -z "$H_LOCAL" ] || [ -z "$H_CANON" ]; then
+      # Sin git no hay forma de saber la dirección, así que se dice con esas palabras
+      # en vez de disfrazar de veredicto lo que es una corazonada de fechas.
+      if ! cmp -s "$CLAUDE_LOCAL" "$CLAUDE_CANONICO"; then
+        M_L=$(stat -c %Y "$CLAUDE_LOCAL" 2>/dev/null || echo 0)
+        M_C=$(stat -c %Y "$CLAUDE_CANONICO" 2>/dev/null || echo 0)
+        SALIDA="${SALIDA}=== TU CLAUDE.md DIFIERE DE LA COPIA CANÓNICA (dirección SIN CONFIRMAR) ===
+Local:    $CLAUDE_LOCAL (fichero del $(date -d "@$M_L" '+%Y-%m-%d %H:%M' 2>/dev/null))
+Canónico: $CLAUDE_CANONICO (fichero del $(date -d "@$M_C" '+%Y-%m-%d %H:%M' 2>/dev/null))
+La copia canónica no está en un repo git legible desde aquí, así que lo único para
+ordenarlos es la FECHA DEL FICHERO, y esa la reescribe cualquier 'cp' o 'pull' sin que
+el contenido cambie. Por eso NO se da veredicto: mira el diff antes de copiar en ninguna
+dirección.
+  diff '$CLAUDE_CANONICO' '$CLAUDE_LOCAL'
+
+"
+      fi
+    elif [ "$H_LOCAL" = "$H_CANON" ]; then
+      # Al día contra la copia que tienes en disco. Pero si el clon trae commits ya
+      # descargados y sin fusionar que tocan ese fichero, la copia con la que acabas de
+      # cuadrar YA NO es la canónica -- y eso se sabe sin red, mirando la rama de
+      # seguimiento que dejó el último fetch. Cuadrar con una copia caducada se lee
+      # igual que estar al día: es el mismo fallo, un paso más atrás.
+      PEND=$(timeout "$(tope 4)" git -C "$DIR_C" rev-list --count 'HEAD..@{u}' -- "$BASE_C" 2>/dev/null || true)
+      if [ "${PEND:-0}" -gt 0 ] 2>/dev/null; then
+        SALIDA="${SALIDA}=== LA COPIA CANÓNICA DE CLAUDE.md CON LA QUE CUADRAS NO ES LA ÚLTIMA ===
+Tu $CLAUDE_LOCAL coincide con $CLAUDE_CANONICO, pero ese clon tiene $PEND commit(s) ya
+traídos y SIN FUSIONAR que tocan ese fichero: estás al día contra una copia caducada.
+  cd '$DIR_C' && git pull
+
+"
+      fi
+    else
+      # Difieren. A partir de aquí solo importa una cosa: en qué dirección.
+      HIST=$(timeout "$(tope 6)" git -C "$DIR_C" log --no-abbrev --format='C %ct' --raw -- "$BASE_C" 2>/dev/null || true)
+      # Un solo awk para las tres cosas: fecha del último commit, en qué commit
+      # (contando desde el más reciente) el canónico tuvo EXACTAMENTE tu contenido, y de
+      # cuándo es ese. En la línea --raw, $4 es el blob DESPUÉS del commit.
+      RESU=$(printf '%s\n' "$HIST" | awk -v h="$H_LOCAL" '
+        BEGIN { hts=""; fn=0; fts="" }
+        /^C /  { ts=$2; n++; if (hts=="") hts=ts; next }
+        /^:/   { if (fn==0 && $4==h) { fn=n; fts=ts } }
+        END    { print hts+0, fn+0, fts+0 }')
+      read -r TS_HEAD N_ENC TS_ENC <<<"$RESU"
+      LINEAS=$(diff "$CLAUDE_LOCAL" "$CLAUDE_CANONICO" 2>/dev/null | awk '/^</{a++} /^>/{b++} END{printf "%d %d", a+0, b+0}')
+      read -r SOLO_TUYA SOLO_CANON <<<"$LINEAS"
+      TAMANO="Difieren en $SOLO_TUYA línea(s) que solo están en la tuya y $SOLO_CANON que solo están en la canónica."
+      M_LOCAL=$(stat -c %Y "$CLAUDE_LOCAL" 2>/dev/null || echo 0)
+      SUCIO=$(timeout "$(tope 4)" git -C "$DIR_C" status --porcelain -- "$BASE_C" 2>/dev/null || true)
+      NOTA_SUCIO=""
+      [ -n "$SUCIO" ] && NOTA_SUCIO="OJO: la copia canónica tiene cambios SIN COMMITEAR en su árbol de trabajo. Lo que hay
+en disco no es lo que verá la otra máquina al hacer pull, y si copias te llevas también
+esas líneas a medias.
+"
+
+      if [ "${N_ENC:-0}" -eq 1 ] && [ -n "$SUCIO" ] 2>/dev/null; then
+        # Tu fichero ES el último commit, y lo único que difiere son ediciones sin
+        # commitear del canónico. Caía en la rama de "vas por detrás", que decía "lleva
+        # 0 commit(s) más" y remataba con "copiarlo encima es SEGURO" -- y no lo es:
+        # traería trabajo a medias que no está en git y que no tiene nadie más.
+        SALIDA="${SALIDA}=== EL CANÓNICO ESTÁ A MEDIO EDITAR; TU CLAUDE.md ES EL ÚLTIMO COMMIT ===
+Local:    $CLAUDE_LOCAL
+Canónico: $CLAUDE_CANONICO
+DIRECCIÓN: ninguna todavía. Tu fichero es, letra por letra, el último commit del canónico
+($(date -d "@$TS_HEAD" '+%Y-%m-%d %H:%M' 2>/dev/null)); lo que difiere son ediciones SIN COMMITEAR en el árbol de trabajo del
+canónico. $TAMANO
+Eso no está en git y no lo tiene nadie más: o alguien dejó algo a medias, o son tuyas y
+falta subirlas. NO copies hasta saber cuál de las dos.
+  cd '$DIR_C' && git diff -- '$BASE_C'
+
+"
+      elif [ "${N_ENC:-0}" -gt 0 ] 2>/dev/null; then
+        SALIDA="${SALIDA}=== TU CLAUDE.md VA POR DETRÁS DEL CANÓNICO ===
+Local:    $CLAUDE_LOCAL
+Canónico: $CLAUDE_CANONICO
+DIRECCIÓN: manda el CANÓNICO. Tu fichero es, letra por letra, el que se commiteó el
+$(date -d "@$TS_ENC" '+%Y-%m-%d %H:%M' 2>/dev/null); desde entonces el canónico lleva $((N_ENC - 1)) commit(s) más, el último del
+$(date -d "@$TS_HEAD" '+%Y-%m-%d %H:%M' 2>/dev/null). $TAMANO
+${NOTA_SUCIO}Copiarlo encima del tuyo es SEGURO: no pierdes nada, tu versión está en git.
+  cp '$CLAUDE_CANONICO' '$CLAUDE_LOCAL'
+CLAUDE.md se lee al ARRANCAR: las reglas que traiga no se aplican a esta sesión.
+
+"
+      elif [ "${TS_HEAD:-0}" -le "$M_LOCAL" ] 2>/dev/null; then
+        SALIDA="${SALIDA}=== TU CLAUDE.md VA POR DELANTE DEL CANÓNICO ===
+Local:    $CLAUDE_LOCAL
+Canónico: $CLAUDE_CANONICO
+DIRECCIÓN: manda el TUYO. Su contenido no aparece en NINGÚN commit del canónico -- lleva
+cambios que las demás máquinas no tienen -- y el canónico no se ha tocado desde que tú
+tocaste el tuyo (último commit, $(date -d "@$TS_HEAD" '+%Y-%m-%d %H:%M' 2>/dev/null)). $TAMANO
+${NOTA_SUCIO}NO copies el canónico encima del tuyo: borrarías esos cambios. Va al revés.
+  cp '$CLAUDE_LOCAL' '$CLAUDE_CANONICO'
+  cd '$DIR_C' && git add '$BASE_C' && git commit && git push
+
+"
+      else
+        SALIDA="${SALIDA}=== TU CLAUDE.md Y EL CANÓNICO HAN CAMBIADO LOS DOS ===
+Local:    $CLAUDE_LOCAL
+Canónico: $CLAUDE_CANONICO
+DIRECCIÓN: NO SE PUEDE DECIDIR, y por eso no se decide. Tu contenido no aparece en ningún
+commit del canónico (llevas cambios propios), pero el canónico tiene un commit posterior
+a la última vez que tocaste el tuyo ($(date -d "@$TS_HEAD" '+%Y-%m-%d %H:%M' 2>/dev/null)). $TAMANO
+${NOTA_SUCIO}Cualquier 'cp' pierde el lado que sobrescriba. Mira el diff y funde a mano:
+  diff '$CLAUDE_CANONICO' '$CLAUDE_LOCAL'
+
+"
+      fi
     fi
   fi
 fi

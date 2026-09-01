@@ -11,6 +11,103 @@ Formato: `## AAAA-MM-DD — [dispositivo] titular`
 
 ---
 
+## 2026-09-01 — [PC Nuevo] El aviso de deriva del `CLAUDE.md`: decir que difieren no sirve si no dices en qué dirección
+
+Sección `1d` de `hooks/sessionstart-leer.sh`. Compara el `~/.claude/CLAUDE.md` de esta
+máquina con la copia canónica de `bitacora-flota` y, si se han separado, dice **cuál de
+las dos manda**. Local, cero red, **0,28 s** cuando cuadran, dentro del `PRESUPUESTO`.
+
+### Por qué no basta con «avisa si difieren», que es lo que se propuso el 29-ago
+
+Hoy se vio el caso real: la copia canónica llevaba **tres días por detrás** de la de esta
+máquina **y su propio README mandaba restaurarla encima** (`cp config/CLAUDE.md
+~/.claude/`). Un aviso que dice «difieren» y calla la dirección deja como única guía la
+documentación, y ese día la documentación llevaba a machacar el fichero bueno con el
+viejo. Callar la dirección no es medio aviso: es el mismo fallo con otra cara.
+
+### Cómo se decide la dirección, y por qué el `mtime` NO vale
+
+Un `cp` o un `git pull` reescriben el fichero y le ponen la hora de HOY sin que su
+contenido sea más nuevo. **La fecha miente justo en las dos operaciones que más se usan
+aquí.** Lo que no miente es la historia de git: se calcula el blob del fichero local y se
+busca entre los commits del canónico.
+
+- **Aparece** → tu copia es una versión ANTERIOR. Vas por detrás, y `cp` canónico → local
+  es seguro: lo tuyo está guardado en un commit, no pierdes nada. Se dice de cuál y
+  cuántos commits llevas de retraso.
+- **No aparece** → llevas cambios que el repo **no ha visto nunca**. Copiar encima los
+  destruye. Solo aquí se mira la fecha, y solo para separar dos cosas: «el tuyo es el
+  nuevo, súbelo» de «han cambiado los dos, funde a mano».
+- **El caso ambiguo se dice como ambiguo.** Inventar una dirección sería peor que callar.
+
+Hay una cuarta rama que **la apareció el banco, no el diseño**: tu fichero es exactamente
+el último commit y lo único que difiere son ediciones **sin commitear** del canónico. Caía
+en «vas por detrás», que remataba con *«copiarlo encima es SEGURO»* — y no lo es: te
+llevarías trabajo a medias que no está en git y que no tiene nadie más. Ahora esa rama no
+da dirección: dice que mires el `git diff` antes de tocar nada.
+
+Todo en una sola llamada a `git log --raw --no-abbrev`, que ya trae el blob resultante de
+cada commit en la columna 4: la alternativa (`rev-parse` por commit) son N procesos, y en
+Git Bash el proceso cuesta más que el trabajo.
+
+### Dos detalles que sin ellos el veredicto sale al revés
+
+- **`hash-object --path`**, no `hash-object` a secas: aplica los atributos de git, o sea
+  la normalización de fin de línea de `*.md text`. Con un CRLF en el árbol de trabajo, el
+  hash no coincidiría con ninguno de la historia y la máquina con CRLF diría siempre «vas
+  por delante». El banco lo prueba de rebote: su repo de pruebas no tiene
+  `.gitattributes`, `autocrlf=true` escupe el aviso de LF→CRLF, y los casos aciertan.
+- **`rev-parse --show-prefix`**, no `--show-toplevel`: en Git Bash `--show-toplevel`
+  devuelve `C:/Users/…` y la ruta configurada es `/c/Users/…`, así que recortar una de la
+  otra no recorta nada. Es el mismo peaje de traducción de rutas que mordió al borrador
+  esta mañana, en otra esquina.
+
+### Un caso que no se pidió y salía gratis: cuadrar con una copia caducada
+
+Si el clon del repo canónico tiene commits **ya traídos y sin fusionar** que tocan el
+fichero, estar «al día» contra lo que hay en disco es falso. Se sabe **sin red**, mirando
+la rama de seguimiento que dejó el último `fetch` (`rev-list --count HEAD..@{u}`). Cuadrar
+con una copia caducada se lee exactamente igual que estar al día: el mismo fallo, un paso
+más atrás.
+
+### DÓNDE VA LA SECCIÓN LO DECIDIÓ UNA PRUEBA, NO EL GUSTO
+
+Primero se puso detrás de la 2c, que es su familia temática. En la primera prueba en vivo
+**el aviso salió cortado justo después de su titular**: 10.514 caracteres contra el techo
+de 10.000, y el techo global recorta por el final.
+
+O sea: **la pieza que existe para que un aviso no se pierda en silencio, se perdió en
+silencio.** Se movió a `1d`, por delante de la bitácora de flota y de la 2c. El criterio,
+que vale para lo que venga: **delante va lo que no se puede leer en ningún otro sitio.**
+La bitácora de flota, si la recortan, dice dónde leerse entera; esto no.
+
+### Probado
+
+Banco con un repo canónico de mentira e historia real, 13 casos: iguales, local en la
+historia, local con cambios propios más nuevo, los dos cambiados, canónico ausente, local
+ausente, canónico fuera de git, canónico sucio con el local por detrás de verdad, clon con
+commits sin fusionar, canónico sin configurar, sin presupuesto, local igual al último
+commit con el canónico a medio editar, y ese mismo caso tras separarlo en rama propia.
+
+Y en vivo contra la historia real de `bitacora-flota`: dándole como «local» la versión de
+`6ff85a8` (29-ago 18:13), canta **«vas por detrás, 1 commit, el último del 1-sep 12:29, 12
+líneas solo en la tuya y 80 solo en la canónica»**. Con los ficheros de verdad, que hoy
+coinciden, **no dice nada** — que es lo que tiene que hacer.
+
+### Lo que NO resuelve, y lo que queda
+
+- **Está apagado por defecto** (`BITACORA_CLAUDE_CANONICO` vacío): la ruta depende de cómo
+  se llame el repo que guarde la copia, y el hook no da por hecha ninguna organización.
+  Puesto ya en el `bitacora.conf` de ESTA máquina. **El PC viejo tiene que añadir esas dos
+  líneas o allí la sección no corre**, y lo único que se lo va a decir es la foto de
+  configuración de la 2c.
+- **Sin `fetch`, el remoto no existe.** Si nadie ha traído nada al clon, `HEAD..@{u}` no
+  sabe de commits nuevos. Es el precio de no tocar la red, y está asumido.
+- **Avisa, no obliga.** Sigue habiendo que copiar a mano.
+- **El `config/README.md` de `bitacora-flota` sigue diciendo que esto está «sin
+  construir», y sigue mandando el `cp` en la dirección que costó el susto de hoy.** Hay
+  que corregirlo, y es otro repo: sesión aparte.
+
 ## 2026-09-01 — [PC Nuevo] El borrador mecánico existe, vive FUERA del repo, y `SessionStart(compact)` ya lo entrega
 
 La pieza que quedaba del diseño de esta mañana: `scripts/borrador-sesion.sh` +

@@ -257,3 +257,23 @@ BITACORA_BORRADOR_MAX_COMANDOS=80        # comandos de Bash/PowerShell (solo la 
 # el transcript de una sesión cerrada no cambia). Si sobran deudas, se dice en el
 # aviso de "ESTA LECTURA VA INCOMPLETA" -- no se recorta en silencio.
 BITACORA_BORRADOR_MAX_POR_ARRANQUE=2
+
+# ---------- Deriva del CLAUDE.md entre máquinas (opcional) ----------
+# ~/.claude/CLAUDE.md es el fichero de instrucciones del agente, es LOCAL de cada
+# máquina y no viaja por git con nada. Si dos máquinas trabajan sobre los mismos repos,
+# una puede llevar días con una regla que la otra no tiene, y ninguna se entera: un
+# fichero que no existe no da error, simplemente no se aplica la regla.
+#
+# Medido el 1-sep-2026: la copia canónica llevaba TRES DÍAS por detrás de la de esta
+# máquina, y el README que la documenta mandaba restaurarla encima -- o sea que seguir
+# la documentación habría machacado el fichero bueno con el viejo. Por eso la sección 2d
+# del hook (1d) no dice solo "difieren": dice EN QUÉ DIRECCIÓN, y lo decide con la HISTORIA
+# DE GIT del canónico, no con la fecha de los ficheros (un 'cp' o un 'pull' le ponen la
+# fecha de hoy a un contenido viejo). Si no puede decidirlo, lo dice como tal.
+#
+# Todo local: cero red. Cuesta ~0,3 s cuando cuadran, y va dentro de BITACORA_PRESUPUESTO.
+#
+# CANONICO vacío = sección apagada. Ponle la ruta a la copia compartida, dentro de un
+# repo git que las dos máquinas tengan clonado (p.ej. "$HOME/repos/<tu-repo>/config/CLAUDE.md").
+BITACORA_CLAUDE_LOCAL="$HOME/.claude/CLAUDE.md"
+BITACORA_CLAUDE_CANONICO=""
