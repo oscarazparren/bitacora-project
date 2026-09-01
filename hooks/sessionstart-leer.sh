@@ -39,6 +39,39 @@ RUTAS="${BITACORA_RUTAS:-$HOME/.claude/bitacora-rutas}"
 
 SALIDA=""
 
+# ---------- stdin: 'source' de la invocación y id de sesión ----------
+# Claude Code entrega en stdin un JSON con, entre otras cosas, "source" (startup,
+# clear, resume, compact...) y "session_id". Hasta el 1-sep-2026 este hook no lo
+# leía: corría idéntico en los cinco casos. Sin jq (no se da por instalado): un
+# sed por campo, y si no aparece, cadena vacía -- adivinar sería peor.
+ENTRADA_STDIN=$(cat 2>/dev/null || true)
+SOURCE=$(printf '%s' "$ENTRADA_STDIN" | sed -n 's/.*"source"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)
+SESION_ID=$(printf '%s' "$ENTRADA_STDIN" | sed -n 's/.*"session_id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)
+
+# En 'compact' este hook HACE DAÑO, y está diagnosticado (BITACORA.md, 1-sep-2026).
+# SessionStart(compact) salta JUSTO DESPUÉS de una compactación -- es decir, justo
+# después de reducir el contexto a propósito porque pesaba demasiado -- y aquí abajo
+# se le vuelven a meter encima hasta MAX_CHARS_TOTAL caracteres de bitácora. Peor
+# aún: la sección 0 pisa el marcador del índice ($VISTO) y la sección 1 avanza el
+# de lectura ($LEIDO), así que el SIGUIENTE arranque de verdad ya no vería lo que
+# se hubiera movido. La sesión que se acaba de compactar sigue VIVA y ya leyó su
+# bitácora al abrirse; no necesita que se le repita.
+#
+# 'clear' NO entra aquí a propósito: /clear vacía el contexto y ahí reinyectar SÍ
+# es lo correcto. 'resume' y 'fork' se dejan como estaban -- no son el bug que se
+# viene a arreglar hoy.
+#
+# Para el diseño de la escritura automática (BITACORA.md, 1-sep): este es el punto
+# donde 'compact' tendrá que enganchar cuando exista esa pieza. De momento se sale
+# -- pero se DEJA CONSTANCIA en el log, que un salto en silencio es justo el fallo
+# que este proyecto persigue.
+if [ "$SOURCE" = "compact" ]; then
+  LOG="${BITACORA_LOG:-$HOME/.claude/bitacora-hook.log}"
+  echo "$(date '+%Y-%m-%d %H:%M:%S') | cwd=$PWD | source=compact | SALTADO (no se reinyecta bitácora tras compactar)" >> "$LOG" 2>/dev/null
+  tail -50 "$LOG" > "$LOG.tmp" 2>/dev/null && mv "$LOG.tmp" "$LOG"
+  exit 0
+fi
+
 # ---------- Presupuesto GLOBAL de tiempo ----------
 # Claude Code mata el hook al llegar a su timeout (45 s en settings.json) y DESCARTA
 # la salida ENTERA, sin avisar ni al usuario ni al agente. Cada llamada de red de aquí
@@ -614,6 +647,53 @@ $ENTRADAS_CARPETA
       SALIDA="${SALIDA}Para anotar aquí: añade una entrada '## \$(date +%F) — [$ETIQUETA] titular' justo debajo del '---' de $F_CARPETA, y haz commit.
 
 "
+    fi
+  fi
+fi
+
+# ---------- 1c. Auditoría: ¿alguna sesión de este repo cerró sin anotar? ----------
+# scripts/auditar-sesiones.sh mira el ARTEFACTO (los commits que tocan $FICHERO) y
+# los transcripts del disco, y dice qué sesiones pasaron el umbral de turnos sin
+# dejar entrada. Hasta hoy nadie -- ni el sistema ni nosotros -- podía responder a
+# "¿esta sesión anotó?" sin un bucle a mano.
+#
+# v1 SOLO INFORMA: no escribe borradores, no toca ningún repo. Y aunque el auditor
+# es LOCAL (git log + find + awk, cero red), cuesta ~3,8 s medidos, así que va
+# DENTRO del presupuesto de esta cabecera: si no queda tiempo se dice con saltado()
+# y no se corre. Meter 3,8 s a ciegas en un hook con plazo duro de 45 s es
+# literalmente cómo murió el hook el 28-ago (cuarto fallo silencioso).
+#
+# Se excluye la sesión actual ($SESION_ID): sigue viva y todavía puede anotar. El
+# auditor además la descartaría por reciente, pero pasarlo explícito no cuesta nada.
+if [ -n "$RAIZ" ] && [ -n "$MOSTRAR" ] && [ -f "$F" ]; then
+  AUDITOR=""
+  for a in "$HOME/repos/bitacora-project/scripts/auditar-sesiones.sh" \
+           "$(dirname "$0")/../scripts/auditar-sesiones.sh"; do
+    [ -f "$a" ] && { AUDITOR="$a"; break; }
+  done
+
+  if [ -n "$AUDITOR" ]; then
+    if hay_tiempo 6; then
+      AUD=$(timeout "$(tope 8)" bash "$AUDITOR" "$RAIZ" "${SESION_ID:-}" 2>/dev/null || true)
+      if [ -z "$AUD" ]; then
+        saltado "auditoría de sesiones sin anotar: no terminó dentro del presupuesto"
+      else
+        DEUDA=$(printf '%s\n' "$AUD" | grep '^SIN-ANOTAR ' || true)
+        if [ -n "$DEUDA" ]; then
+          N_DEUDA=$(printf '%s\n' "$DEUDA" | grep -c '^SIN-ANOTAR ' || true)
+          SALIDA="${SALIDA}=== AUDITORÍA: $N_DEUDA sesión(es) de este repo cerraron SIN ANOTAR ===
+$(printf '%s' "$DEUDA" | sanear_delimitadores)
+
+Lo dice el auditor mirando los commits que tocan $FICHERO, no un registro de
+\"hecho\". Si reconoces alguna, reconstrúyela desde su transcript y anótala ahora.
+Si de verdad no hubo nada que anotar en ella, no hace falta hacer nada -- pero
+míralo, no lo des por hecho.
+
+"
+        fi
+      fi
+    else
+      saltado "auditoría de sesiones sin anotar: sin presupuesto de tiempo para correrla"
     fi
   fi
 fi

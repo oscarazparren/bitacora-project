@@ -11,6 +11,62 @@ Formato: `## AAAA-MM-DD — [dispositivo] titular`
 
 ---
 
+## 2026-09-01 — [PC Nuevo] El auditor ya está cableado al arranque, y `sessionstart-leer.sh` por fin distingue `source`
+
+Los dos puntos de "Siguiente" de la entrada de abajo, hechos en el mismo cambio a
+`hooks/sessionstart-leer.sh`.
+
+### 1. `source=compact` ya no reinyecta nada
+
+El hook no leía stdin: corría idéntico en `startup`, `clear`, `resume`, `compact` y
+`fork`. En `compact` eso hacía daño y estaba diagnosticado — el evento salta JUSTO
+DESPUÉS de compactar (contexto recién reducido a propósito por caro) y el hook le volvía
+a meter encima hasta 10.000 caracteres de bitácora. Y peor: la sección 0 pisaba el
+marcador del índice (`$VISTO`) y la sección 1 avanzaba el de lectura (`$LEIDO`), así que
+**el siguiente arranque de verdad ya no veía lo que se había movido**.
+
+Ahora se lee stdin con dos `sed` (sin `jq`, no se da por instalado) y **en `compact` el
+hook sale antes de tocar nada** — deja una línea `SALTADO` en el log (un salto en
+silencio es justo el fallo que este proyecto persigue) y nada más. `clear` NO entra en
+el filtro a propósito: ahí el contexto se vació y reinyectar SÍ es lo correcto. `resume`
+y `fork` se dejan como estaban — no eran el bug de hoy. Comprobado: `compact` sale con
+código 0, stdout vacío, línea en el log; `startup`/`resume`/`clear` corren enteros.
+
+Cuando exista la pieza de escritura automática, **este es el punto donde `compact` tiene
+que enganchar** (ver la entrada de abajo). Hay un comentario en el hook que lo dice.
+
+### 2. El auditor corre al arrancar (sección 1c), dentro del presupuesto
+
+`scripts/auditar-sesiones.sh` se invoca desde la sección nueva 1c, con `$RAIZ` y
+`$SESION_ID` (la sesión actual se excluye: sigue viva y puede anotar). **v1 SOLO
+INFORMA**: si hay líneas `SIN-ANOTAR`, se inyecta un bloque con ellas; si no, silencio.
+No escribe borradores, no toca ningún repo.
+
+Respeta el presupuesto de la cabecera como pedía la entrada de abajo: `hay_tiempo 6`
+antes de arrancarlo, `timeout "$(tope 8)"` al lanzarlo, y `saltado()` si no cabe — con
+lo que la degradación aparece en el "ESTA LECTURA VA INCOMPLETA" del final. El auditor
+es LOCAL (cero red) pero cuesta ~3,8 s medidos, y meterlos a ciegas en un hook con plazo
+duro de 45 s es literalmente cómo murió el hook el 28-ago.
+
+Probado de punta a punta: desde `bitacora-project` (sin deuda → silencio, 2,7 s el
+auditor solo, 12 s el hook entero) y desde `AlcoholTax-IA` (deuda conocida del 25-ago,
+335 turnos → el bloque `AUDITORÍA:` aparece con esa línea, hook a 16 s/25 s, `ok`).
+
+### 3. De paso: el `.example` ya documenta las 7 variables del auditor
+
+`bitacora-project@c6dad2a` añadió el auditor pero no documentó sus variables, así que la
+sección 2c del propio hook cantaba "el CÓDIGO las lee pero el .example no las documenta"
+**en cada arranque**. Añadidas a `bitacora.conf.example` con los defaults del 1-sep y su
+porqué: `BITACORA_AUDITORIA_{UMBRAL_TURNOS,DIAS,RECIENTE_MIN,VENTANA_HORAS,GRACIA_MIN}`,
+`BITACORA_PROYECTOS`, `BITACORA_REGISTRO_SESIONES`. El aviso de drift ya no sale.
+
+### Siguiente
+
+La escritura automática de verdad (el borrador local, nunca commiteado, que describe la
+entrada de abajo). Los dos canales al agente —`SessionStart` y `UserPromptSubmit`— ya
+están cableados; falta la pieza que redacta el borrador mecánico y el `SessionStart(compact)`
+que lo entregue como deuda.
+
 ## 2026-09-01 — [PC Nuevo] El auditor ya corre y encuentra dos deudas reales — y de paso: el transcript NO está ordenado por fecha
 
 Construido el paso 1 del diseño de la entrada anterior: **`scripts/auditar-sesiones.sh`**

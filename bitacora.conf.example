@@ -197,3 +197,25 @@ BITACORA_CARPETA_MAX_CHARS=2500 # techo de caracteres de esta sección
 # sobre las sesiones que haya en disco, para recalibrar si hace falta.
 BITACORA_CONTEXTO_AVISO_TOKENS=200000    # ~200k: conviene ir cerrando (bajado de 250k el 1-sep-2026)
 BITACORA_CONTEXTO_URGENTE_TOKENS=400000  # ~400k: cerrar ya
+
+# ---------- Auditoría de sesiones sin anotar (opcional) ----------
+# scripts/auditar-sesiones.sh, cableado en sessionstart-leer.sh (sección 1c) el
+# 1-sep-2026: al arrancar, mira los commits que tocan el fichero de bitácora y los
+# transcripts del disco, y avisa de qué sesiones de este repo cerraron sin dejar
+# entrada. Es la pieza que faltaba -- hasta ella nadie podía decir "esta sesión no
+# anotó" sin un bucle a mano. SOLO INFORMA: no escribe borradores ni toca el repo.
+#
+# Es LOCAL (git log + find + awk, cero red) pero cuesta ~3,8 s, así que corre
+# DENTRO del presupuesto del hook (BITACORA_PRESUPUESTO, arriba): si no queda
+# tiempo se dice y no se corre. Los defaults salen de mediciones del 1-sep-2026;
+# no hace falta ponerlas salvo que quieras afinar.
+BITACORA_AUDITORIA_UMBRAL_TURNOS=10   # por debajo de esto no hay nada que anotar (la sesión sin entrada de la semana tenía 0 turnos; la más corta que sí anotó, 9)
+BITACORA_AUDITORIA_DIAS=14            # más atrás, la deuda ya no es accionable: nadie reconstruye una sesión de hace un mes
+BITACORA_AUDITORIA_RECIENTE_MIN=30   # una sesión cuyo último apunte es más nuevo que esto puede seguir VIVA en otra ventana; no se juzga
+BITACORA_AUDITORIA_VENTANA_HORAS=6   # ventana hacia atrás desde el CIERRE donde se busca el commit de bitácora (no la sesión entera: una de varios días se apropiaría de anotaciones ajenas)
+BITACORA_AUDITORIA_GRACIA_MIN=5      # margen para considerar que otra sesión CONTINÚA a ésta (corte limpio); sin esto, cortar -- que es la disciplina -- generaba deuda falsa
+
+# Dónde están los transcripts de Claude Code y el registro que deja
+# hooks/sessionend-anotar.sh en cada cierre. Rara vez se tocan.
+BITACORA_PROYECTOS="$HOME/.claude/projects"
+BITACORA_REGISTRO_SESIONES="$HOME/.claude/bitacora-sesiones"
