@@ -430,7 +430,14 @@ if [ -n "$FLOTA_SSH" ] && [ -n "$INDICE_REPOS" ]; then
         n=$1
         if (!(n in est)) { print "SINDATOS " n; next }
         print "MARCA " n " " est[n]
-        if (primera != "si" && est[n] != ant[n]) print "CAMBIADO " n
+        if (primera == "si") next
+        # Un repo sin marca local NO ha cambiado: es que no lo seguíamos hasta hoy.
+        # Compararlo contra una marca vacía da siempre distinto, o sea que saldría como
+        # movido sin que nadie lo haya tocado. Y no es un caso raro: pasa EN BLOQUE cada
+        # vez que se amplía repos.txt o se siembra estado.txt (29 repos de golpe el
+        # 1-sep-2026). Un aviso de 29 movimientos falsos enseña a no leer los avisos.
+        if (!(n in ant)) { print "NUEVO " n; next }
+        if (est[n] != ant[n]) print "CAMBIADO " n
       }
     ' "$TMPD/todo" > "$TMPD/salida" 2>/dev/null
 
@@ -451,7 +458,28 @@ if [ -n "$FLOTA_SSH" ] && [ -n "$INDICE_REPOS" ]; then
 "
       fi
     done
-    SIN_DATOS=$(grep -c '^SINDATOS ' "$TMPD/salida" 2>/dev/null || echo 0)
+    # Los vigilados se reparten en TRES montones, y el titular solo puede hablar de uno.
+    #   SIN_DATOS    - el servidor no sabe nada de ellos.
+    #   NUEVOS       - el servidor sí sabe, pero esta máquina no los seguía: no hay
+    #                  contra qué comparar, así que tampoco se sabe si se han movido.
+    #   COMPARABLES  - los únicos de los que se puede decir "sin movimiento" y ser cierto.
+    SIN_DATOS=$(grep -c '^SINDATOS ' "$TMPD/salida" 2>/dev/null || true)
+    [ -n "$SIN_DATOS" ] || SIN_DATOS=0
+    CON_DATOS=$(grep -c '^MARCA ' "$TMPD/salida" 2>/dev/null || true)
+    [ -n "$CON_DATOS" ] || CON_DATOS=0
+    NUEVOS_N=$(grep -c '^NUEVO ' "$TMPD/salida" 2>/dev/null || true)
+    [ -n "$NUEVOS_N" ] || NUEVOS_N=0
+    COMPARABLES=$((CON_DATOS - NUEVOS_N))
+    # Con tope: los NUEVOS llegan en bloque por naturaleza (ampliar repos.txt, sembrar
+    # estado.txt), y el diseño apunta a 200 repos. Una lista de 200 nombres se comería
+    # media inyección de las 10.000 que admite Claude Code, y no hay nada que hacer con
+    # ella: es informativa. Los CAMBIADOS no llevan tope a propósito -- esos sí piden
+    # actuar, y llegan de pocos en pocos.
+    NUEVOS_LISTA=$(grep '^NUEVO ' "$TMPD/salida" 2>/dev/null | awk '{print "  " $2}' | head -20)
+    if [ "$NUEVOS_N" -gt 20 ]; then
+      NUEVOS_LISTA="$NUEVOS_LISTA
+  ... y $((NUEVOS_N - 20)) más"
+    fi
 
     FECHA_ANT=$(awk 'NR==1 {print $3, $4}' "$VISTO" 2>/dev/null || true)
 
@@ -469,8 +497,50 @@ $FICHERO: el detalle y lo que se descartó están ahí, no aquí.
 
 "
     else
-      SALIDA="${SALIDA}=== ÍNDICE DE CAMBIOS${FECHA_ANT:+ (desde $FECHA_ANT)} ===
-Sin movimiento en ninguno de los repos vigilados.
+      # El titular dice SOBRE CUÁNTOS repos habla, y no habla de los que no sabe.
+      # Antes ponía "sin movimiento en ninguno de los repos vigilados" sin mirar
+      # SIN_DATOS. El 1-sep-2026, con 27 de los 40 vigilados sin ningún dato en el
+      # servidor, el titular afirmó igualmente sobre todos y tranquilizó; el aviso de
+      # SIN DATOS salía después, en párrafo aparte, así que la letra pequeña
+      # desmentía al titular. Coste real: se pasaron por alto 13 repos que sí se
+      # habían movido, uno de ellos 21 commits por detrás.
+      if [ "$COMPARABLES" -eq 0 ]; then
+        SALIDA="${SALIDA}=== ÍNDICE DE CAMBIOS: HOY NO DICE NADA${FECHA_ANT:+ (desde $FECHA_ANT)} ===
+No hay ni un repo vigilado con el que comparar ($SIN_DATOS sin datos en el servidor,
+$NUEVOS_N nuevos en el índice). Esto no es \"sin movimiento\", es \"no se sabe\".
+
+"
+      elif [ "$SIN_DATOS" -gt 0 ] || [ "$NUEVOS_N" -gt 0 ]; then
+        # Ojo con ${VAR:+...} aquí: estas variables valen "0", que NO es vacío, así que
+        # habría escrito "0 nuevos". Se arma a mano y se acabó la sutileza.
+        RESTO=""
+        [ "$NUEVOS_N" -gt 0 ] && RESTO="$NUEVOS_N nuevos en el índice"
+        if [ "$SIN_DATOS" -gt 0 ]; then
+          [ -n "$RESTO" ] && RESTO="$RESTO y "
+          RESTO="${RESTO}$SIN_DATOS sin datos en el servidor"
+        fi
+        SALIDA="${SALIDA}=== ÍNDICE DE CAMBIOS: PARCIAL${FECHA_ANT:+ (desde $FECHA_ANT)} ===
+Sin movimiento en los $COMPARABLES repos que ya seguía.
+De los demás NO se sabe: $RESTO.
+No es que no se hayan movido; es que no hay con qué compararlos. Detalle abajo.
+
+"
+      else
+        SALIDA="${SALIDA}=== ÍNDICE DE CAMBIOS${FECHA_ANT:+ (desde $FECHA_ANT)} ===
+Sin movimiento en ninguno de los $COMPARABLES repos vigilados.
+
+"
+      fi
+    fi
+
+    # Los que entran hoy al índice. Se dicen por nombre y NO como movimiento: hasta la
+    # próxima sesión no hay contra qué comparar. A partir de mañana entran en el reparto
+    # normal y ya sí avisan de verdad.
+    if [ "$NUEVOS_N" -gt 0 ] && [ "$PRIMERA" != "si" ]; then
+      SALIDA="${SALIDA}ENTRAN HOY EN EL ÍNDICE ($NUEVOS_N): esta máquina no los seguía hasta ahora, así que
+de estos NO se sabe si se han movido. Se anotan tal como están y desde la próxima sesión
+avisan como los demás.
+$NUEVOS_LISTA
 
 "
     fi

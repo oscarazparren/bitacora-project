@@ -11,6 +11,113 @@ Formato: `## AAAA-MM-DD — [dispositivo] titular`
 
 ---
 
+## 2026-09-01 — [PC viejo] El titular del índice afirmaba sobre repos de los que no tenía ni un dato
+
+Sección `0` de `hooks/sessionstart-leer.sh`. La rama de «sin movimiento» no miraba
+`SIN_DATOS`: con **27 de los 40 vigilados sin ninguna fila en el servidor**, imprimía
+*«Sin movimiento en ninguno de los repos vigilados»* y el aviso de SIN DATOS salía
+**después, en párrafo aparte**. El titular tranquilizaba y la letra pequeña lo desmentía.
+Coste real esa mañana: 13 repos movidos que no se miraron, uno **21 commits por detrás**.
+
+Un aviso que hay que leer entero para no sacar la conclusión contraria no es medio aviso:
+es el fallo silencioso de siempre con mejor presentación.
+
+### Los vigilados son TRES montones, no dos
+
+El arreglo no es redactar mejor, es dejar de mezclar cosas que no se saben igual:
+
+- **`SIN_DATOS`** — el servidor no sabe nada de ellos.
+- **`NUEVOS`** — el servidor sí sabe, pero esta máquina no los seguía. No hay contra qué
+  comparar, así que tampoco se sabe si se han movido.
+- **`COMPARABLES`** — los únicos de los que decir «sin movimiento» es **cierto**.
+
+El titular habla solo de `COMPARABLES` y **dice cuántos son**. Si hay resto, lo nombra y
+manda al detalle. Si no hay ni un comparable, el titular es «HOY NO DICE NADA»: eso no es
+«sin movimiento», es «no se sabe», y decirlo de otra forma es mentir con buena letra.
+
+### El tercer montón no estaba previsto: lo destapó la siembra
+
+Un repo **sin marca local** se comparaba contra vacío, daba distinto, y salía como
+`CAMBIADO`. Con 13 filas nadie lo notó. Al sembrar las 27 que faltaban, el arranque
+siguiente habría anunciado **27 movimientos inventados** — en el hook que se acababa de
+arreglar por afirmar de más. Y no era un caso raro esperando a la siembra: pasaba igual
+cada vez que se ampliaba `repos.txt`, en bloque y sin que nadie lo relacionara.
+
+Ahora salen como `NUEVO`, en su propio párrafo, diciendo lo que son: entran hoy, de estos
+no se sabe, desde mañana avisan como los demás. **Con tope de 20 nombres** — el diseño
+apunta a 200 repos y una lista de 200 se comería media inyección de las 10.000 que admite
+Claude Code. Los `CAMBIADO` no llevan tope a propósito: esos piden actuar y llegan de
+pocos en pocos.
+
+### Lo que NO se hizo, y es la mitad del valor
+
+**No se sustituyeron los webhooks por un barrido local.** Ya se probó: `ls-remote` por
+repo es lineal (~4 s por repo en Windows) y rompió el arranque el 29-ago; la variante con
+subprocesos se midió en **41 s** contra un presupuesto de 45 que ese día ya se había
+gastado a los 25. Cambiar la red por subprocesos no arregla nada. Lo añadido a la sección
+0 son **dos `grep -c` sobre un fichero temporal local**: el coste sigue siendo constante
+en el número de repos, que es la razón entera de que existan los webhooks.
+
+De rebote apareció un accidente: `SIN_DATOS=$(grep -c ... || echo 0)` producía `"0\n0"`
+cuando no había coincidencias (grep imprime `0` **y** sale con código 1, así que el
+`|| echo 0` también corría). El `[ -gt 0 ]` reventaba y el `2>/dev/null` se comía el
+error, o sea que la condición salía falsa por la razón equivocada. Funcionaba por
+casualidad; ahora el titular depende de ese número y ya no puede permitírselo.
+
+## 2026-09-01 — [PC viejo] Sembrar el estado sin meter una credencial en el servidor
+
+`scripts/sembrar-estado.sh`, nuevo. Los webhooks solo avisan de pushes **futuros**, así
+que `estado.txt` nace vacío y se llena repo a repo. Para un repo que nadie toca eso no se
+llena **nunca**: 27 de 40 llevaban semanas en «no se sabe». Ejecutado hoy, quedan **0**.
+
+### El token no se mueve del PC, y ese es el diseño entero
+
+`receptor-webhook.py` explica por qué el servidor no pregunta a GitHub: guardar allí un
+token de lectura sobre todos los repos amplía el botín de quien entre, y ese servidor ya
+guarda los `.env` de todos los agentes. **Ese razonamiento sigue en pie.** La API se
+consulta **desde este PC**, con el `gh` que ya estaba autenticado, y al servidor solo le
+llega una lista de nombre+SHA por SSH. No queda ninguna credencial nueva allí, ni de paso.
+
+Una llamada GraphQL paginada para los 42 repos de la cuenta (**8,4 s**), no un GET por
+repo. No entra en el presupuesto del hook porque esto se lanza a mano, pero un script que
+tarda un minuto se lanza la mitad de veces que uno que tarda ocho segundos.
+
+### Solo añade, y aborta si le pisan
+
+Un repo con fila tiene un dato **mejor** que el nuestro: viene de un push real, con su
+hora. El nuestro es una foto de ahora mismo. Así que solo se añaden los que faltan.
+
+El riesgo es que llegue un webhook entre la lectura y la escritura. Viaja el `md5` del
+fichero y se **vuelve a comprobar en el servidor, en el mismo comando que renombra**: si
+no cuadra, no se escribe nada y se dice que se relance. El renombrado es atómico, igual
+que el `os.replace` del receptor.
+
+La 4ª columna `sembrado` marca la procedencia y **desaparece sola** con el primer push de
+verdad: el receptor conserva las columnas extra y las sustituye al actualizar. Probado
+contra el fichero real antes de darlo por bueno — 29 marcas, un push simulado la baja a 28
+y deja la fila con el formato normal.
+
+### Sí se siembran los archivados, y no es incoherencia
+
+`sincronizar-webhooks.sh` los salta porque GitHub no deja ponerles webhook. **Justo por
+eso hay que sembrarlos aquí**: nunca recibirán un push, nunca se llenará su fila, y se
+quedarían en «no se sabe» de por vida cuando en realidad sabemos que no se pueden mover.
+Sembrados, el índice dice de ellos la verdad. Son `clon-avatar` y `agente-reclamaciones`,
+que no están en `repos.txt` y que el `CLAUDE.md` manda no clonar; tener su fila no invita
+a nada, solo cierra un «no se sabe» permanente.
+
+### Tres cosas medidas que no cuadraban con lo que se traía
+
+- Eran **40 vigilados y 13 con datos**, no 19 y 46. Los 27 sin datos sí eran exactos.
+  En el código quedó lo medido, no lo recordado.
+- **El índice nunca ha contestado «mi clon local está por detrás».** Contesta «el remoto
+  se ha movido desde mi última sesión», que es otra pregunta. El repo con 21 commits de
+  retraso no lo cubre este mecanismo ni antes ni después de sembrar. **Sigue sin construir**,
+  y conviene no confundirlo con lo que se arregló hoy.
+- Al simular el arranque se descubrió que ejecutar el hook de verdad **habría pisado el
+  marcador** y tragado los cambios del día en silencio. Todas las pruebas se hicieron
+  sobre una copia; el marcador de esta máquina no se tocó.
+
 ## 2026-09-01 — [PC Nuevo] El aviso de deriva del `CLAUDE.md`: decir que difieren no sirve si no dices en qué dirección
 
 Sección `1d` de `hooks/sessionstart-leer.sh`. Compara el `~/.claude/CLAUDE.md` de esta
