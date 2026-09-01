@@ -60,6 +60,12 @@ distinto del de serie.
   el `.example` es contra lo que la sección 2c de `sessionstart-leer.sh` compara la
   configuración de cada máquina: dejarlo en 250000 habría convertido el fichero de
   referencia en la fuente de una descuadre que el propio repo se dedica a detectar.
+- **Y de paso, un desfase ajeno a este cambio, visto al pasar por el mismo fichero:**
+  el `.example` seguía diciendo que el aviso de variables retiradas sale **por stderr**.
+  Dejó de ser cierto el 30-ago (commit `b366d34`), que es justo cuando se descubrió que
+  el `2>/dev/null` de `settings.json` se lo tragaba; la línea del `.example` se quedó
+  sin actualizar. Corregida: ahora dice additionalContext y explica por qué no puede ser
+  stderr. Es documentación de una trampa ya pisada una vez, así que costaba más dejarla.
 
 ### Comprobado, no supuesto
 

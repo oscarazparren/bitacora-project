@@ -178,8 +178,10 @@ BITACORA_CARPETA_MAX_CHARS=2500 # techo de caracteres de esta sección
 # hooks/userpromptsubmit-contexto.sh: avisa cuando sale a cuenta cortar la
 # sesión y abrir otra. El umbral es de TOKENS de contexto, no de bytes del
 # transcript -- BITACORA_CONTEXTO_AVISO/URGENTE (en bytes) quedaron RETIRADAS
-# el 29-ago-2026; si las tienes puestas, el hook te avisa por stderr de que ya
-# no hacen nada.
+# el 29-ago-2026; si las tienes puestas, el hook te lo avisa una vez por sesión
+# para que sepas que ya no hacen nada -- por additionalContext, NO por stderr:
+# settings.json envuelve este hook con "2>/dev/null", así que un aviso por ahí
+# no lo vería nadie (el hook se corrigió el 30-ago-2026 y esta línea se quedó sin actualizar).
 #
 # Por qué se retiraron, con el daño medido: el umbral de 2 MB correspondía a
 # sesiones de entre 58k y 394k tokens de contexto según el caso -- un factor
