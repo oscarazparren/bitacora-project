@@ -11,6 +11,74 @@ Formato: `## AAAA-MM-DD — [dispositivo] titular`
 
 ---
 
+## 2026-09-03 — [PC Nuevo] La rama «funde a mano» existe y no se disparó: el discriminador es el `mtime`, y hoy dio la dirección destructiva
+
+Continúa la entrada del 1-sep de aquí abajo, «El aviso de deriva del `CLAUDE.md`».
+**El diseño era correcto y la implementación tiene una rama de menos en la práctica.**
+Sección `1d` de `hooks/sessionstart-leer.sh`, lógica entre las líneas ~940 y ~1030.
+
+### Lo que pasó hoy, en vivo
+
+El aviso de arranque del PC Nuevo dijo, literal:
+
+    DIRECCION: manda el TUYO. Su contenido no aparece en NINGÚN commit del canónico
+    NO copies el canónico encima del tuyo: borrarías esos cambios. Va al revés.
+      cp '/c/Users/Oscar/.claude/CLAUDE.md' '.../bitacora-flota/config/CLAUDE.md'
+
+**Ejecutar ese `cp` habría borrado del canónico la sección entera «Los comandos que se
+le dan a Oscar van SIEMPRE en PowerShell»** — 30 líneas, pedidas por Oscar el 30/08 para
+las DOS máquinas — y habría empujado esa pérdida a toda la flota. No era una copia
+segura: era destructiva en la dirección que el propio aviso recomendaba.
+
+La realidad era divergencia en las DOS direcciones: al local le faltaba la regla de
+PowerShell y la comprobación de repos por remoto; al canónico le faltaba el bloque
+«INCUMPLIDA EL 02/09/2026» sobre la regla del mensaje de arranque.
+
+### El fallo, exactamente
+
+La entrada del 1-sep ya describe la rama buena:
+
+> **No aparece** → llevas cambios que el repo no ha visto nunca. Solo aquí se mira la
+> fecha, y solo para separar dos cosas: «el tuyo es el nuevo, súbelo» de «han cambiado
+> los dos, funde a mano».
+
+**Esa segunda rama no se disparó, y el motivo es el discriminador: el `mtime`.** Mi
+local se había editado después del último commit del canónico, así que la fecha dijo
+«el tuyo es el nuevo» — que es cierto y a la vez irrelevante, porque el canónico TAMBIÉN
+había cambiado. La fecha responde «cuál se tocó al final», no «quién tiene contenido que
+al otro le falta», que es la pregunta de verdad.
+
+Es la misma lección que esa entrada ya había aprendido para el otro caso —*«el `mtime`
+NO vale»*— aplicada a medias: se retiró de la comparación principal y se dejó justo aquí.
+
+### El dato para arreglarlo YA SE CALCULA
+
+Línea ~1027, que cuenta las dos direcciones:
+
+    LINEAS=$(diff "$CLAUDE_LOCAL" "$CLAUDE_CANONICO" | awk '/^</{a++} /^>/{b++} ...')
+
+El aviso incluso lo IMPRIME: *«difieren en 11 líneas que solo están en la tuya y 47 que
+solo están en la canónica»*. Tenía `b=47` delante y aun así dijo «manda el TUYO». O sea,
+no falta medir nada: falta usar lo medido para elegir la rama.
+
+**Arreglo propuesto** (sustituir el `mtime` por el contenido, en la rama «no aparece»):
+
+- `b == 0` → el local es superconjunto estricto. «El tuyo es el nuevo, súbelo.» Igual
+  que ahora.
+- `a > 0 && b > 0` → **divergencia en las dos direcciones. Ninguna copia es segura.**
+  No dar `cp` en ningún sentido; decir que se funde y ofrecer el `diff` en los dos.
+
+### Cómo se fundió esta vez, por si sirve de patrón
+
+Base el canónico (era superconjunto salvo un bloque), insertado el bloque que solo tenía
+el local, resultado idéntico byte a byte en las dos copias (`cmp`), respaldo previo.
+Dos trampas que aparecieron y conviene que el arreglo no repita:
+
+- **`diff` a secas da FALSA ALARMA de pérdida** cuando el bloque cambia de posición: hay
+  que comprobar con `comm` sobre entradas ordenadas, que es independiente del orden.
+- **`sed -n 'X,Yp'` se come los `\r`** de un fichero CRLF, y la fusión sale con finales
+  de línea mezclados. Normalizar antes de instalar.
+
 ## 2026-09-01 — [PC viejo] El titular del índice afirmaba sobre repos de los que no tenía ni un dato
 
 Sección `0` de `hooks/sessionstart-leer.sh`. La rama de «sin movimiento» no miraba
