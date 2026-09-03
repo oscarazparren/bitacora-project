@@ -941,8 +941,13 @@ fi
 #   - Aparece    -> tu copia es una versión ANTERIOR del canónico. Vas por detrás, y
 #                   copiar canónico -> local es seguro: no pierdes nada.
 #   - No aparece -> tu copia lleva cambios que el repo no ha visto NUNCA. Copiar
-#                   canónico -> local los destruye. Solo aquí se mira la fecha, y solo
-#                   para separar "el tuyo es el nuevo" de "han cambiado los dos".
+#                   canónico -> local los destruye. Para separar "el tuyo es el nuevo,
+#                   súbelo" de "han divergido, funde a mano" se mira el RECUENTO DE
+#                   LÍNEAS del diff, NO la fecha: si a tu copia no le falta ninguna
+#                   línea del canónico eres un superconjunto y mandas tú; si cada lado
+#                   tiene líneas que al otro le faltan, ningún cp es seguro. El mtime
+#                   solo respondía "cuál se tocó al final", que no es la pregunta -- y
+#                   el 3-sep dio por eso la dirección destructiva (ver BITACORA.md).
 # El caso ambiguo se DICE como ambiguo. Inventar una dirección sería peor que callarse.
 if [ -n "$CLAUDE_CANONICO" ]; then
   if ! hay_tiempo 3; then
@@ -1024,10 +1029,13 @@ traídos y SIN FUSIONAR que tocan ese fichero: estás al día contra una copia c
         /^:/   { if (fn==0 && $4==h) { fn=n; fts=ts } }
         END    { print hts+0, fn+0, fts+0 }')
       read -r TS_HEAD N_ENC TS_ENC <<<"$RESU"
-      LINEAS=$(diff "$CLAUDE_LOCAL" "$CLAUDE_CANONICO" 2>/dev/null | awk '/^</{a++} /^>/{b++} END{printf "%d %d", a+0, b+0}')
+      # --strip-trailing-cr: sin él, un CLAUDE.md local en CRLF (lo normal en Windows)
+      # marca TODAS las líneas como distintas y el veredicto sale siempre "han divergido".
+      # El hash de la historia ya se compara normalizado (hash-object --path); esto pone
+      # el recuento de líneas en la misma base.
+      LINEAS=$(diff --strip-trailing-cr "$CLAUDE_LOCAL" "$CLAUDE_CANONICO" 2>/dev/null | awk '/^</{a++} /^>/{b++} END{printf "%d %d", a+0, b+0}')
       read -r SOLO_TUYA SOLO_CANON <<<"$LINEAS"
       TAMANO="Difieren en $SOLO_TUYA línea(s) que solo están en la tuya y $SOLO_CANON que solo están en la canónica."
-      M_LOCAL=$(stat -c %Y "$CLAUDE_LOCAL" 2>/dev/null || echo 0)
       SUCIO=$(timeout "$(tope 4)" git -C "$DIR_C" status --porcelain -- "$BASE_C" 2>/dev/null || true)
       NOTA_SUCIO=""
       [ -n "$SUCIO" ] && NOTA_SUCIO="OJO: la copia canónica tiene cambios SIN COMMITEAR en su árbol de trabajo. Lo que hay
@@ -1063,25 +1071,25 @@ ${NOTA_SUCIO}Copiarlo encima del tuyo es SEGURO: no pierdes nada, tu versión es
 CLAUDE.md se lee al ARRANCAR: las reglas que traiga no se aplican a esta sesión.
 
 "
-      elif [ "${TS_HEAD:-0}" -le "$M_LOCAL" ] 2>/dev/null; then
+      elif [ "${SOLO_TUYA:-0}" -gt 0 ] && [ "${SOLO_CANON:-0}" -eq 0 ] 2>/dev/null; then
         SALIDA="${SALIDA}=== TU CLAUDE.md VA POR DELANTE DEL CANÓNICO ===
 Local:    $CLAUDE_LOCAL
 Canónico: $CLAUDE_CANONICO
 DIRECCIÓN: manda el TUYO. Su contenido no aparece en NINGÚN commit del canónico -- lleva
-cambios que las demás máquinas no tienen -- y el canónico no se ha tocado desde que tú
-tocaste el tuyo (último commit, $(date -d "@$TS_HEAD" '+%Y-%m-%d %H:%M' 2>/dev/null)). $TAMANO
+cambios que las demás máquinas no tienen -- y a tu copia no le falta ni una línea del
+canónico: es un SUPERCONJUNTO suyo, no una divergencia. $TAMANO
 ${NOTA_SUCIO}NO copies el canónico encima del tuyo: borrarías esos cambios. Va al revés.
   cp '$CLAUDE_LOCAL' '$CLAUDE_CANONICO'
   cd '$DIR_C' && git add '$BASE_C' && git commit && git push
 
 "
       else
-        SALIDA="${SALIDA}=== TU CLAUDE.md Y EL CANÓNICO HAN CAMBIADO LOS DOS ===
+        SALIDA="${SALIDA}=== TU CLAUDE.md Y EL CANÓNICO HAN DIVERGIDO ===
 Local:    $CLAUDE_LOCAL
 Canónico: $CLAUDE_CANONICO
 DIRECCIÓN: NO SE PUEDE DECIDIR, y por eso no se decide. Tu contenido no aparece en ningún
-commit del canónico (llevas cambios propios), pero el canónico tiene un commit posterior
-a la última vez que tocaste el tuyo ($(date -d "@$TS_HEAD" '+%Y-%m-%d %H:%M' 2>/dev/null)). $TAMANO
+commit del canónico -- llevas cambios propios -- y, a la vez, el canónico tiene $SOLO_CANON
+línea(s) que a la tuya le faltan: cada lado tiene algo que al otro no le ha llegado. $TAMANO
 ${NOTA_SUCIO}Cualquier 'cp' pierde el lado que sobrescriba. Mira el diff y funde a mano:
   diff '$CLAUDE_CANONICO' '$CLAUDE_LOCAL'
 

@@ -11,7 +11,72 @@ Formato: `## AAAA-MM-DD — [dispositivo] titular`
 
 ---
 
-## 2026-09-03 — [PC Nuevo] La rama «funde a mano» existe y no se disparó: el discriminador es el `mtime`, y hoy dio la dirección destructiva
+## 2026-09-03 — [PC Nuevo] El discriminador de la rama «no aparece» pasa del `mtime` al recuento de líneas, y el banco de pruebas queda COMMITEADO
+
+Arreglo de lo diagnosticado en la entrada de aquí abajo. Sección `1d` de
+`hooks/sessionstart-leer.sh`, dentro del `else` de «difieren», rama en la que el
+contenido local **no aparece en ningún commit del canónico**.
+
+### Qué cambió
+
+- **Fuera el `mtime`.** Antes: `TS_HEAD <= M_LOCAL` («¿el canónico se commiteó antes de
+  que tú tocaras tu fichero?») separaba «manda el tuyo» de «han cambiado los dos». Ahora
+  el discriminador es el `diff`, que ya se calculaba dos líneas más arriba para el texto
+  `$TAMANO`:
+  - `SOLO_TUYA > 0 && SOLO_CANON == 0` → a tu copia no le falta ni una línea del canónico:
+    es un **superconjunto**. «Manda el tuyo, súbelo.» (igual que antes, sin depender de
+    fechas).
+  - resto → **`=== TU CLAUDE.md Y EL CANÓNICO HAN DIVERGIDO ===`**. Cada lado tiene algo
+    que al otro no le ha llegado; ningún `cp` es seguro; `diff` y funde a mano. (El
+    titular era «HAN CAMBIADO LOS DOS»; se cambia porque ahora afirma sobre el contenido,
+    no sobre el reloj.)
+- **`diff --strip-trailing-cr`.** Sin él, un `CLAUDE.md` local en CRLF —lo normal en
+  Windows— marca TODAS las líneas como distintas y el veredicto sale siempre «han
+  divergido». El hash de la historia ya se comparaba normalizado (`hash-object --path`);
+  esto pone el recuento en la misma base.
+- **`M_LOCAL` retirada**: solo la usaba el discriminador viejo.
+
+### Por qué el `mtime` fallaba en LAS DOS direcciones
+
+El banco lo enseña al correrlo contra el hook anterior (`bash scripts/probar-1d-deriva.sh
+<hook-viejo>` → 6 fallos):
+
+- **Caso de hoy** (local y canónico divergidos, local recién tocado): el viejo decía
+  «VA POR DELANTE → `cp` local sobre canónico», que era **la dirección destructiva**
+  (habría borrado de la flota la regla de PowerShell). El nuevo: «HAN DIVERGIDO».
+- **Superconjunto limpio con el fichero local antiguo** (nadie tocó el `~/.claude/`
+  desde hace meses, el canónico acaba de recibir un commit): el viejo daba **falsa
+  alarma** de divergencia (`TS_HEAD > M_LOCAL`). El nuevo: «VA POR DELANTE», correcto.
+- **Local que borra un bloque que el canónico conserva**: el viejo decía «manda el
+  tuyo» y te habría hecho subir ese borrado a la flota. El nuevo: «HAN DIVERGIDO».
+
+### El banco de pruebas, esta vez commiteado
+
+`scripts/probar-1d-deriva.sh` — 15 casos, 23 asserts, cero red. **Extrae en vivo el
+bloque de la 1d del hook real** (entre sus marcadores `# ---------- 1d.` y
+`# ---------- 2.`) y lo corre con stubs de `hay_tiempo`/`tope`/`saltado` contra un repo
+canónico de mentira con historia real. Si alguien edita la 1d, el banco prueba la
+versión nueva sin tocar el fichero de test.
+
+El de la entrada del 1-sep («13 casos») **nunca se commiteó** —era un directorio de usar
+y tirar y desapareció—, y por eso el fallo de hoy no tenía red de seguridad. Este hook
+corre en CADA arranque en las dos máquinas: una regresión aquí rompe el arranque en las
+dos, así que el banco vive dentro del repo.
+
+### Lo que NO se tocó, a propósito
+
+- **El canónico avanza SOLO quitando líneas que el local tampoco tiene** →
+  `SOLO_CANON == 0` → «VA POR DELANTE». Raro (commit que solo borra + el local ya sin
+  esas líneas por su cuenta) y no ejecuta nada solo: el comando sugerido es `git commit`
+  interactivo, así que se ve el diff antes. Anotado, no arreglado.
+- **Si el canónico estuviera en la RAÍZ de su repo** (no en `config/`), `rev-parse
+  --show-prefix` devuelve vacío, `HASHES` se queda vacío y la 1d cae siempre en
+  «dirección SIN CONFIRMAR». No pasa en el despliegue real (`bitacora-flota/config/`),
+  pero es una trampa latente para quien organice el repo de otra forma.
+- El `config/README.md` de `bitacora-flota` **sigue** diciendo «sin construir» y
+  mandando el `cp` destructivo. Otro repo, sesión aparte (ya apuntado el 1-sep).
+
+
 
 Continúa la entrada del 1-sep de aquí abajo, «El aviso de deriva del `CLAUDE.md`».
 **El diseño era correcto y la implementación tiene una rama de menos en la práctica.**
