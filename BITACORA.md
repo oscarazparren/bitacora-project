@@ -11,6 +11,112 @@ Formato: `## AAAA-MM-DD — [dispositivo] titular`
 
 ---
 
+## 2026-09-04 — [PC viejo] El «motor agéntico» del vídeo se implementa AQUÍ, y su primera pieza es el contable: `scripts/coste-sesiones.py`
+
+Decisión de sitio y primera pieza construida, a partir del análisis del vídeo «Deja de
+usar Claude Code sin un Motor Agéntico» de Benjamín Cordero (YouTube `_aD00IQTgdY`,
+analizado en una carpeta de usar y tirar, sin repo).
+
+### Dónde vive, y por qué aquí
+
+No en un repo nuevo, ni en `bitacora-flota`, ni en la carpeta suelta `bitacora`. **En
+`bitacora-project`**, por tres razones:
+
+1. **El lector de `~/.claude/projects/*/*.jsonl` ya está escrito aquí** —
+   `calibrar-umbral.py`, `auditar-sesiones.sh`, `borrador-leer-transcript.js`—. Duplicarlo
+   en otro repo garantiza que los dos den números distintos y que nadie sepa cuál creer.
+2. **El principio del vídeo —observar y proponer, nunca ejecutar— es la doctrina ya
+   escrita** en la cabecera de `auditar-sesiones.sh`: «EL AUDITOR NO ES QUIEN ESCRIBE».
+   No hay que importar una idea nueva; hay que aplicar la que ya está.
+3. **La instalación en dos máquinas ya existe** (`bitacora.conf`, `INSTALAR.md`), y
+   también el precedente de un componente que no es un hook (`servidor/receptor-webhook.py`).
+
+### DESCARTADO a propósito
+
+El **dashboard React+Vite**, el **grafo de memoria** y el **tour visual** del vídeo. El
+propio autor admite que el odómetro le salió en una tarde y que el resto le llevó dos
+semanas. Un servicio web que mantener vivo en dos máquinas es coste fijo a cambio de
+estética. El agregador escupe JSON: **la página se monta el día que se eche de menos**,
+no antes.
+
+También descartado enganchar el contable a un hook, y esto sí tiene número: inyectar
+~300 tokens de resumen en cada prompt de una sesión de 200 turnos se acumula hasta
+millones de tokens de relectura, del orden de **3 $ por sesión** — más que el gasto que
+pretendería vigilar. El script se ejecuta bajo demanda y su JSON va a fichero, no a la
+conversación.
+
+### Lo que hace `scripts/coste-sesiones.py`
+
+Suma las **cuatro clases de token de CADA mensaje** del assistant, atribuidas al modelo
+de ese turno y valoradas a las tarifas publicadas de la API (consultadas el 4-sep-2026).
+Agrega por sesión, por modelo y por día; tabla legible y `--json`. Es lo que hoy se saca
+a mano con el `grep` del `CLAUDE.md`, que solo da **un** número de **una** sesión.
+
+La diferencia con `calibrar-umbral.py` es la que justifica que sean dos scripts y no
+uno: aquél mira el `usage` del ÚLTIMO mensaje, o sea **el tamaño del contexto** en ese
+instante. Éste suma todos. **Un número es una foto; el otro es la factura.**
+
+Sin dependencias fuera de la librería estándar, no escribe nada, salida 0 siempre. Tarda
+**3 segundos** sobre los 286 MB de transcripts de esta máquina.
+
+### Cuatro hallazgos del formato, todos medidos antes de escribir el código
+
+Ninguno estaba documentado en el repo, y tres de los cuatro cambian el resultado:
+
+- **Sumar las líneas del `.jsonl` infla el gasto un 153 %.** Un mismo `message.id`
+  aparece varias veces: una por bloque de contenido dentro del fichero, y además 2.016
+  ids están repartidos por 55 ficheros distintos, porque al reanudar o bifurcar una
+  sesión Claude Code **copia la historia anterior al `.jsonl` nuevo, con su `usage`
+  intacto**. Medido sobre todo el disco: **4.570,30 $ sumando líneas contra 1.808,81 $
+  reales**. Se deduplica por `message.id` en toda la carpeta y cada mensaje se atribuye
+  a su aparición más antigua, que es la sesión que lo pagó.
+- **El top-level de `usage` no siempre es el total.** Cuando existe `usage.iterations`,
+  manda la suma de las iteraciones. De 11.572 mensajes únicos, 11.515 coinciden con su
+  top-level y **dos no**: uno con una iteración `fallback_message` cuyo top-level declara
+  129.803 tokens de lectura mientras las iteraciones suman 290.849; y otro **con el
+  top-level todo a cero** mientras su única iteración declara 919.625 tokens de lectura,
+  casi medio dólar invisible. En agregado son 0,61 $ (0,03 %), pero es la clase de error
+  que no avisa: el caso normal sale idéntico y el raro sale mal.
+- **El 96,8 % de las escrituras de caché son de TTL de 1 hora**, que cuesta 2x la tarifa
+  base, no 1,25x como las de 5 minutos. Valorarlo todo a 1,25x subestimaría esa partida
+  en un 60 %. El desglose viene en `usage.cache_creation` y estaba completo en el 100 %
+  de las escrituras.
+- **Las tarifas de caché se guardan, no se derivan.** La regla general es 1,25x / 2x /
+  0,1x sobre la entrada, pero la lectura de caché de Claude Fable 5.1 es **0,025x**.
+  Derivar habría multiplicado por cuatro esa fila sin que nada avisara — y Fable 5.1 ya
+  aparece en los transcripts de esta máquina.
+
+### El dato que confirma la regla de cortar sesión
+
+`CLAUDE.md` dice que el 58 % del gasto es `cache_read` —reenviar lo ya dicho—, medido en
+agosto sobre `lizar-asistente-aula` en la OTRA máquina. Medido ahora aquí, con otro
+código, otro periodo y otros repos: **56 % en los últimos 7 días, 62 % sobre todo el
+disco**. La regla no se apoyaba en una casualidad de un repo.
+
+De paso, el orden de magnitud del gasto real de esta máquina: **1.807,66 $ en 120
+sesiones** entre el 13-ago y el 4-sep; **747,31 $ solo en los últimos 7 días**.
+
+### Verificación
+
+- Cotejado contra un cálculo independiente escrito aparte sobre una sesión aislada
+  (`1ab6bf3b`): **151 mensajes, 25.204.953 tokens, 18,99 $** por las dos vías, cifra a
+  cifra.
+- Transcript sintético con los cinco casos borde: modelo desconocido, id con sufijo de
+  fecha (`claude-haiku-4-5-20251001`), modo rápido `/fast`, mensaje `<synthetic>` y
+  top-level a cero con iteración real. Los cinco salen como debían.
+- Ejecutado desde **PowerShell**, que es donde lo va a correr Oscar, sin problemas de
+  acentos en consola.
+
+**Tres estados, nunca colapsados** (misma doctrina que `auditar-sesiones.sh`): un modelo
+sin tarifa conocida NO vale 0,00 $ —eso se lee como «gratis»—, sino `s/tarifa`, y la fila
+que lo contenga se marca `68.50+?`. En el JSON, `coste_incompleto: true`.
+
+### Queda para después
+
+El **«sueño»**: script hermano de `auditar-sesiones.sh` que revise a diario y proponga
+mejoras sin ejecutarlas. Esta entrada es su sitio de partida.
+
+
 ## 2026-09-03 — [PC Nuevo] El discriminador de la rama «no aparece» pasa del `mtime` al recuento de líneas, y el banco de pruebas queda COMMITEADO
 
 Arreglo de lo diagnosticado en la entrada de aquí abajo. Sección `1d` de
