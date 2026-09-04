@@ -277,3 +277,42 @@ BITACORA_BORRADOR_MAX_POR_ARRANQUE=2
 # repo git que las dos máquinas tengan clonado (p.ej. "$HOME/repos/<tu-repo>/config/CLAUDE.md").
 BITACORA_CLAUDE_LOCAL="$HOME/.claude/CLAUDE.md"
 BITACORA_CLAUDE_CANONICO=""
+
+# ---------- El sueño: repaso diario que propone y no ejecuta (opcional) ----------
+# scripts/sueno.sh corre de noche, sin nadie mirando, y escribe UN informe con lo que
+# habría que hacer: sesiones sin anotar en TODOS los repos, sesiones que se pasaron del
+# umbral de contexto, sesiones caras y trabajo sin subir. No anota, no commitea, no sube
+# y no borra nada -- si se arreglara solo y dejara escrito que lo hizo, sería la avería
+# del hook que moría por timeout con más superficie.
+#
+# No es un hook y no debe serlo: ejecutarlo cuesta cero tokens, pero su salida inyectada
+# en cada arranque se pagaría en cada turno posterior. Va al Programador de tareas de
+# Windows (o a cron en el servidor) y lo que se lee es el fichero.
+BITACORA_SUENOS="$HOME/.claude/bitacora-suenos"
+
+# Raíz donde buscar repos, un nivel de profundidad. Se excluyen los que casen con
+# BITACORA_IGNORAR (de arriba): referencia/ y archivo/ no son trabajo en curso.
+BITACORA_SUENO_REPOS="$HOME/repos"
+
+# Ventana del repaso, en días. NO afecta a la sección de deuda de bitácora: ésa usa la
+# del auditor (BITACORA_AUDITORIA_DIAS), porque la deuda de anotar no caduca en 2 días.
+BITACORA_SUENO_DIAS=2
+
+# A partir de cuántos dólares una sesión merece una mirada. 20 no es un número redondo:
+# medido el 4-sep-2026 sobre 84 sesiones de una semana, marcaba 12 sesiones (14 %) que
+# se llevaban el 55 % del gasto. A 30 $ baja al 42 % del gasto; a 10 $ salen 22 sesiones
+# y deja de ser una lista que alguien mire.
+BITACORA_SUENO_COSTE_SESION=20
+
+# Estado de reincidencia: cada propuesta lleva una clave estable y aquí se recuerda
+# desde cuándo sale. Una propuesta que lleva una semana repitiéndose ya no es una
+# propuesta, es un dato sobre el sistema (o no se ve, o no se puede hacer, o no importa).
+BITACORA_SUENO_ESTADO="$HOME/.claude/bitacora-suenos/propuestas.tsv"
+
+# Días sin volver a salir tras los cuales una propuesta se cae del recuento: si lleva un
+# mes sin repetirse, ya no describe nada del presente.
+BITACORA_SUENO_OLVIDO_DIAS=30
+
+# El umbral de contexto NO se configura aquí: el sueño usa BITACORA_CONTEXTO_URGENTE_TOKENS,
+# el mismo que avisa en cada prompt. Dos umbrales distintos para la misma pregunta se
+# contradirían delante del humano, y entonces no se cree ninguno.

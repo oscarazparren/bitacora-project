@@ -11,6 +11,119 @@ Formato: `## AAAA-MM-DD — [dispositivo] titular`
 
 ---
 
+## 2026-09-04 — [PC viejo] El sueño: `scripts/sueno.sh` repasa de noche los 41 repos y PROPONE, y al construirlo destapa un fallo del auditor
+
+Segunda pieza del «motor agéntico» del vídeo, la que quedaba pendiente en la entrada de
+aquí abajo. Hermano de `auditar-sesiones.sh`, con la misma doctrina llevada un paso más
+allá: **el que sueña no ejecuta**.
+
+### Por qué existe, y qué hace
+
+El auditor responde a UNA pregunta (¿esta sesión anotó?) sobre UN repo, y lo hace en el
+arranque, con 25 segundos de presupuesto. El sueño corre de noche, sin nadie esperando:
+recorre **todos** los repos, cruza lo que ya saben las piezas sueltas y escribe una
+lista de propuestas. Cuatro revisores:
+
+1. **Deuda de bitácora en TODOS los repos.** El hook `Stop` retirado solo miraba el repo
+   desde el que se abrió la sesión: avisaba de uno y callaba de los demás. Esto lo
+   arregla por la vía bruta de recorrerlos todos.
+2. **Sesiones que terminaron por encima del umbral duro de contexto.** Usa
+   `BITACORA_CONTEXTO_URGENTE_TOKENS` —el MISMO umbral que avisa en cada prompt— a
+   propósito: dos umbrales distintos para la misma pregunta se contradicen delante del
+   humano, y entonces no se cree ninguno.
+3. **Sesiones caras**, apoyado en `coste-sesiones.py` vía su JSON.
+4. **Trabajo hecho y no subido.** Dos máquinas sobre los mismos repos.
+
+**NO ES UN HOOK, y no debe serlo.** Mismo razonamiento que el contable: ejecutarlo
+cuesta cero tokens, pero su salida inyectada en cada arranque se paga en cada turno
+posterior. Va al Programador de tareas; lo que se lee es el fichero, en
+`~/.claude/bitacora-suenos/AAAA-MM-DD.md`, fuera de todo árbol de trabajo de git.
+
+**Y no arregla nada.** Un proceso que se arregla solo por la noche y deja escrito que lo
+hizo es la avería del hook que moría por timeout —el que escribía su línea de éxito 22
+segundos después de estar muerto— con más superficie. No anota, no commitea, no sube, no
+borra. La única concesión es `--fetch`, opcional, lo único de todo el script que toca la
+red, y ni siquiera entonces modifica el árbol de trabajo.
+
+### Los umbrales están medidos, no elegidos a ojo
+
+- **20 $ por sesión.** Sobre 84 sesiones de la última semana, marca 12 (el 14 %) que se
+  llevan el **55 % del gasto**. A 30 $ baja al 42 % del gasto; a 10 $ salen 22 sesiones y
+  deja de ser una lista que alguien mire.
+- **400.000 tokens de contexto.** 6 de 95 sesiones de la semana (6 %), o sea ~1 al día.
+  Accionable. No se inventa: es el umbral que ya usa el hook de contexto.
+- **Coste de correrlo: entre 141 y 180 s con 41 repos** y 286 MB de transcripts (tres
+  ejecuciones medidas). Es de noche y no hay nadie esperando; por eso el sueño puede
+  permitirse lo que el hook de arranque no.
+
+### Las propuestas se acuerdan de sí mismas
+
+Cada propuesta lleva una clave estable y un estado local. Si mañana vuelve a salir, sale
+numerada: «4º día que se propone, desde el 2026-09-01». **Una propuesta que lleva una
+semana repitiéndose ya no es una propuesta: es un dato sobre el sistema** —o no se ve, o
+no se puede hacer, o no importa—. Sin esa cuenta, un informe diario es indistinguible de
+un informe diario que nadie lee. Las claves caducan a los 30 días sin repetirse.
+
+**Fallo propio, encontrado probándolo:** en la primera versión, tres de las cuatro claves
+llevaban la fecha dentro (`coste:2026-09-04`), así que ninguna podía repetirse nunca y el
+contador estaba muerto de nacimiento. Lo que hay que recordar no es la sesión concreta
+—ya pasó y no tiene arreglo— sino que **la situación** se repite.
+
+### FALLO DESTAPADO EN `auditar-sesiones.sh` (no arreglado hoy, a propósito)
+
+La primera ejecución propuso **reconstruir 7 sesiones «de `bitacora`» que eran de otros
+dos repos**. La causa está en el auditor, no en el sueño:
+
+> El auditor busca las carpetas de transcripts por PREFIJO —`C--Users-Oscar-repos-x` y
+> `C--Users-Oscar-repos-x-*`— para cubrir las sesiones abiertas en una SUBCARPETA del
+> repo, que es el caso monorepo de `agentes-lizar`. **El efecto colateral aparece cuando
+> el nombre de un repo es prefijo del de otro:** preguntado por `~/repos/bitacora`,
+> devuelve también las sesiones de `bitacora-flota` y `bitacora-project`, las juzga
+> contra la bitácora equivocada y las declara SIN-ANOTAR.
+
+Consecuencia real: en el arranque de `~/repos/bitacora` el auditor canta deuda falsa de
+los otros dos repos. Y en la dirección contraria no tapa nada, porque cada repo se sigue
+juzgando también con su propio patrón.
+
+**Arreglado en el sueño, no en el auditor.** El sueño asigna cada transcript al repo cuyo
+patrón case **más largo** —el más específico— y descarta el resto. No se toca
+`auditar-sesiones.sh` porque corre en CADA arranque de las dos máquinas y una regresión
+ahí las rompe las dos: es exactamente la lección del 3-sep, la que hizo que el banco de
+pruebas de la sección `1d` se commiteara. El arreglo del auditor necesita su propio banco
+de pruebas y su propia sesión. **Queda pendiente y anotado aquí, que es donde sobrevive.**
+
+### La trampa de `python3` en Windows
+
+El revisor de gasto salió `NO-SE-PUDO-COMPROBAR` en la primera ejecución sin que se
+supiera por qué. Causa: **en esta máquina `python3` resuelve a
+`C:\...\WindowsApps\python3`, el alias del Microsoft Store.** Existe, está en el PATH y
+`command -v` lo da por bueno; al invocarlo escupe «no se encontró Python» y sale con 49.
+
+La comprobación correcta no es que el nombre exista, es **ejecutarlo**: `"$cand" -c
+'import sys'`. Barato y definitivo. Vale para cualquier script de este repo que busque un
+intérprete.
+
+### Lo que encontró en su primera pasada real
+
+No es teórico: hay **deuda real** de sesiones sin anotar repartida por cinco repos
+(`agentes-lizar`, `kangurea-web`, `lizar-asisteweb`, `lizar-flota`, `lizar-informes`),
+una sesión que terminó en 400.627 tokens de contexto, cuatro sesiones por encima de 20 $
+en tres días —306,24 $ en total, el 52 % en releer contexto ya enviado— y seis repos con
+cambios sin commitear.
+
+### DESCARTADO a propósito
+
+- **Que se arregle solo.** Ver arriba: es la avería del hook muerto con más superficie.
+- **Engancharlo a un hook.** Coste en tokens en cada turno, para algo que se lee una vez
+  al día.
+- **Red por defecto.** Sin `--fetch` no se sabe si el remoto va por delante, y se dice
+  así en el propio informe en vez de dejar que la columna parezca un dato.
+- **Comprobar repos de la cuenta sin clonar.** Necesita `gh` y credenciales; no es
+  trabajo de un proceso nocturno desatendido.
+- **Repetir el aviso de deriva del `CLAUDE.md`.** Ya lo canta el arranque (sección 1d).
+  Dos voces sobre lo mismo se acaban contradiciendo.
+
+
 ## 2026-09-04 — [PC viejo] El «motor agéntico» del vídeo se implementa AQUÍ, y su primera pieza es el contable: `scripts/coste-sesiones.py`
 
 Decisión de sitio y primera pieza construida, a partir del análisis del vídeo «Deja de

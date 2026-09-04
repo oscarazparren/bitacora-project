@@ -74,6 +74,8 @@ terminado.** Lo que hay funciona; lo que falta está identificado y documentado.
 | Esquema con ciclo de vida de decisiones | 📄 Especificado, sin validador todavía |
 | Auditoría de sesiones que cerraron sin anotar | ✅ `scripts/auditar-sesiones.sh`, en el arranque desde el 2026-09-01. Mira el **artefacto** (commits que tocan la bitácora), no un registro de «hecho» |
 | Borrador mecánico de la sesión, para reconstruirla | ✅ `scripts/borrador-sesion.sh` desde el 2026-09-01. **Local, nunca commiteado, sin coste de modelo** — prompts literales, ficheros escritos, comandos y commits |
+| Coste real por sesión, modelo y día | ✅ `scripts/coste-sesiones.py` desde el 2026-09-04. Suma las **cuatro clases de token de cada mensaje** a tarifas publicadas. Sumar las líneas del transcript sin más infla el gasto un 153 % |
+| Repaso diario que **propone y no ejecuta** | ✅ `scripts/sueno.sh` desde el 2026-09-04. Deuda de bitácora en **todos** los repos, sesiones pasadas del umbral de contexto, sesiones caras y trabajo sin subir. Escribe un informe fuera de todo repo; no anota, no commitea, no sube |
 | **Que el agente escriba la entrada solo** | ❌ **No implementado, y no por descuido.** `PreCompact` y `SessionEnd` no pueden hacer que el agente escriba (son *side-effect only*), y un hook no redacta. Hoy hay auditoría + borrador; **la entrada la sigue escribiendo el agente** |
 | Un fichero por entrada (`.bitacora/`) | ❌ Hoy es un `BITACORA.md` único: conflicto de merge si dos máquinas anotan el mismo día |
 | Lectura selectiva por relevancia | ❌ Hoy es `head -40`, truncado ciego que degrada con cada entrada |
