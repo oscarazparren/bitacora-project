@@ -145,10 +145,42 @@ modelo=$(grep -o '"model":"[^"]*"' "$transcript" 2>/dev/null | tail -1 | sed 's/
 [ -n "$modelo" ] || modelo="desconocido"
 tokens_k="$(( tokens / 1000 ))k tokens"
 
+# ---------- Lo que llevas gastado, en dinero ----------
+# EL BUCLE ESTABA ABIERTO Y NADIE LO HABÍA VISTO. Preguntado por Oscar el 5-sep-2026:
+# scripts/coste-sesiones.py calcula el gasto real de cada sesión, y NO LO LEÍA NADIE --
+# su único consumidor era sueno.sh, que no está enganchado ni a los hooks ni a ninguna
+# tarea programada. O sea que se medía para nadie, mientras este aviso, que es justo
+# donde el dato hace falta, decidía con un umbral fijo y no decía el precio.
+#
+# El umbral se queda como está: está calibrado sobre 1.154 turnos reales (31-ago) y sigue
+# siendo la señal que dispara. Lo que se añade es el NÚMERO que justifica la decisión --
+# "205k tokens" no le dice nada a nadie, "8,09 $ en esta sesión" sí.
+#
+# VA AQUÍ Y NO ARRIBA. Este hook corre en CADA mensaje, y arrancar Python en cada uno
+# sería pagar el peaje siempre para enseñarlo una vez. Puesto detrás de la marca de
+# escalón, se ejecuta como mucho DOS veces por sesión (aviso y urgente). Con '--sesion'
+# lee un fichero, no los 286 MB de la carpeta.
+#
+# Y SI NO SALE, NO SE INVENTA: el script devuelve 1 y no imprime nada cuando hay algún
+# modelo sin tarifa, porque sumar un coste desconocido como cero se lee "gratis". En ese
+# caso el aviso sale sin la frase del dinero, en vez de con un número falso.
+COSTE_PY=""
+for base in "$HOME/repos/bitacora-project/scripts" "$(dirname "$0")/../scripts"; do
+  [ -z "$COSTE_PY" ] && [ -f "$base/coste-sesiones.py" ] && COSTE_PY="$base/coste-sesiones.py"
+done
+gasto=""
+if [ -n "$COSTE_PY" ]; then
+  usd=$(timeout 10 python "$COSTE_PY" --sesion "$sesion" --cifra 2>/dev/null || true)
+  case "$usd" in
+    ''|*[!0-9.]*) : ;;
+    *) gasto=" Van $usd \$ gastados en ella." ;;
+  esac
+fi
+
 if [ "$escalon" = "urgente" ]; then
-  cabecera="Esta sesión ya es MUY larga ($tokens_k de contexto, $turnos turnos). Cortar aquí sale claramente a cuenta."
+  cabecera="Esta sesión ya es MUY larga ($tokens_k de contexto, $turnos turnos).$gasto Cortar aquí sale claramente a cuenta."
 else
-  cabecera="Esta sesión se está haciendo larga ($tokens_k de contexto, $turnos turnos). Es buen momento para cortar."
+  cabecera="Esta sesión se está haciendo larga ($tokens_k de contexto, $turnos turnos).$gasto Es buen momento para cortar."
 fi
 
 # Instrucción para el agente, no texto para repetir literalmente.

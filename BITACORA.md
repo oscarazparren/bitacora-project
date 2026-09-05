@@ -161,13 +161,41 @@ separan sin avisar: se quita explícita. Casos 12 a 15 del banco.
   de 45. La auditoría son 2,5 de esos 36: **el resto es red** (índice de 41 repos, `ssh`,
   la comprobación del `CLAUDE.md` canónico). Es un problema distinto y más gordo que el que
   se acaba de arreglar.
-- **El bucle de la medición de coste está ABIERTO, y no se sabía.** Preguntado hoy por
-  Oscar: `coste-sesiones.py` mide el gasto, pero **solo lo lanza `sueno.sh` o una mano**, no
-  hay dashboard ni HTML en ninguna parte del repo, y —lo importante— **el aviso que
-  recomienda cortar la sesión no lee ni un dato suyo**: lleva `200000` y `400000` fijos en
-  el código de `userpromptsubmit-contexto.sh`. `calibrar-umbral.py` recalcula ese número
-  pero hay que ejecutarlo a mano, y se ejecutó una vez, el 31-ago. O sea que se mide para
-  nadie: la recomendación no aprende de lo medido.
+### 9. EL BUCLE DE LA MEDICIÓN DE COSTE ESTABA ABIERTO. Cerrado
+
+Lo destapó una pregunta de Oscar —*«¿dónde voy a ver yo los resultados de esto que mide el
+precio?»*— y la respuesta era: **en ningún sitio**. `coste-sesiones.py` calcula el gasto
+real de cada sesión y **no lo leía nadie**: no hay dashboard ni HTML en el repo, su único
+consumidor era `sueno.sh`, y `sueno.sh` no está enganchado a nada — ni a los hooks de
+`settings.json` ni a una tarea programada de Windows. Comprobado, no supuesto.
+
+Mientras tanto, **el aviso que recomienda cortar decidía a ciegas**: `200000` y `400000`
+fijos en el código, y ni una palabra del dinero. Se medía para nadie justo al lado del
+único sitio donde el dato sirve.
+
+**Yo lo había llamado «no es un cabo suelto, es una función nueva», y era falso.** El
+argumento de Oscar es el correcto y es de lógica pura: algo que se construye con un único
+consumidor evidente y no se conecta **no está terminado**, por mucho que no rompa nada.
+Llamarlo «función nueva» era una forma de dejarlo enterrado con permiso.
+
+**Qué se enganchó, y dónde va la línea:**
+
+- `coste-sesiones.py` gana `--sesion ID` (lee **un** fichero en vez de barrer los 286 MB de
+  `~/.claude/projects`) y `--cifra` (imprime solo el número, para que lo consuma un script).
+- El aviso lo llama **detrás de la marca de escalón**, no arriba: ese hook corre en CADA
+  mensaje, y arrancar Python en todos sería pagar el peaje siempre para enseñarlo una vez.
+  Así se ejecuta **como mucho dos veces por sesión**. Medido: 1,9 s cuando avisa, y el
+  camino normal sigue sin lanzar Python.
+- **El umbral no se toca.** Está calibrado sobre 1.154 turnos reales (31-ago) y sigue
+  siendo lo que dispara. Lo que se añade es el número que justifica la decisión: «205k
+  tokens» no le dice nada a nadie; «van 8,09 $ en esta sesión» sí.
+- **Si el coste no se puede saber, no se inventa**: con un modelo sin tarifa el script
+  devuelve 1 y no imprime, y el aviso sale sin la frase del dinero en vez de con un cero
+  que se leería «gratis». Es el tercer estado del auditor, aplicado aquí.
+
+Queda vivo, y ahora sí dicho como lo que es: **`sueno.sh` sigue sin lanzarlo nadie**, y el
+umbral sigue **congelado** — `calibrar-umbral.py` lo recalcularía, pero hay que ejecutarlo
+a mano y se ejecutó una vez.
 - Sigue vivo lo de la sección 7 de la entrada de abajo (sesiones que cruzan entre carpetas
   normales).
 
@@ -194,6 +222,10 @@ separan sin avisar: se quita explícita. Casos 12 a 15 del banco.
   Comprobado que la salida entera la lleva y que las salidas cortas también, y que el
   auditor viejo bajo `timeout 8` da **0 líneas** — que es lo que destapó la corrección del
   punto 6.
+- **Enganche del coste**: comprobado el aviso de verdad, con y sin escalón. Con aviso sale
+  «van 8.09 $ gastados en ella» y tarda 1,9 s; sin aviso, 0,96 s y **no arranca Python**.
+  `coste-sesiones.py --resumen` sigue dando lo de siempre (hoy: 18 sesiones, 127,85 $, de
+  los que 66,97 $ —el 52 %— son releer contexto ya enviado).
 - **Regla cambiada en el `CLAUDE.md` local** a petición de Oscar: el mensaje de arranque
   solo se da **si queda algo que hacer**; si no queda, se dice que ha terminado y no se
   manda abrir otro chat. Y lo pendiente, por pequeño que sea, se acaba en la sesión que lo

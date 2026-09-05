@@ -180,12 +180,18 @@ def dia_local(marca):
         return "?"
 
 
-def recolectar(carpeta_proyectos):
+def recolectar(carpeta_proyectos, solo_sesion=None):
     """Un registro por mensaje de assistant ÚNICO en toda la carpeta. Devuelve también
-    el recuento de lo descartado, que se imprime en vez de callarse."""
+    el recuento de lo descartado, que se imprime en vez de callarse.
+
+    Con 'solo_sesion' se lee ÚNICAMENTE el .jsonl de esa sesión. No es una comodidad:
+    este script lo llama el aviso de contexto en cada corte, y barrer los 286 MB de
+    ~/.claude/projects para valorar una sola sesión tardaría lo que tarda un hook en
+    morirse. Filtrar después de recolectar leería lo mismo."""
     mensajes = {}
     duplicados = sinteticos = ilegibles = 0
-    for jsonl in sorted(Path(carpeta_proyectos).glob("*/*.jsonl")):
+    patron = f"*/{solo_sesion}.jsonl" if solo_sesion else "*/*.jsonl"
+    for jsonl in sorted(Path(carpeta_proyectos).glob(patron)):
         try:
             f = open(jsonl, encoding="utf-8", errors="replace")
         except OSError:
@@ -290,6 +296,12 @@ def main():
     ap.add_argument("--carpeta-proyectos", default=os.path.expanduser("~/.claude/projects"),
                     help="raiz de los <proyecto>/<sesion>.jsonl (por defecto ~/.claude/projects)")
     ap.add_argument("--proyecto", help="filtra por subcadena del nombre de proyecto")
+    ap.add_argument("--sesion", metavar="ID",
+                    help="valora SOLO esa sesion (lee un fichero, no la carpeta entera)")
+    ap.add_argument("--cifra", action="store_true",
+                    help="imprime solo el coste en dolares, sin formato: para engancharlo "
+                         "a otro script. Sin datos no imprime nada y devuelve 1, para que "
+                         "quien lo llame distinga 'no lo se' de 'cero'")
     ap.add_argument("--dias", type=int, help="solo los ultimos N dias")
     ap.add_argument("--desde", help="fecha minima inclusive, AAAA-MM-DD")
     ap.add_argument("--hasta", help="fecha maxima inclusive, AAAA-MM-DD")
@@ -305,8 +317,10 @@ def main():
         # La consola de Windows no siempre habla UTF-8; que un acento no tumbe el informe.
         sys.stdout.reconfigure(errors="replace")
 
-    registros, descartes = recolectar(args.carpeta_proyectos)
+    registros, descartes = recolectar(args.carpeta_proyectos, args.sesion)
     if not registros:
+        if args.cifra:
+            return 1
         print(f'No se encontraron mensajes con "usage" en {args.carpeta_proyectos}', file=sys.stderr)
         return 0
 
@@ -328,7 +342,20 @@ def main():
         filtrados.append(r)
 
     if not filtrados:
+        if args.cifra:
+            return 1
         print("Ningun mensaje pasa los filtros indicados.", file=sys.stderr)
+        return 0
+
+    # --cifra sale AQUI, antes de construir los agregados y las tablas: quien la pide es
+    # un hook con prisa y solo quiere el numero. Un coste desconocido (modelo sin tarifa)
+    # vale None, y sumarlo como cero diria "gratis" -- asi que si falta alguno, no se
+    # imprime nada y se devuelve 1. Es el mismo "no lo se" que el tercer estado del
+    # auditor, y por la misma razon.
+    if args.cifra:
+        if any(r["coste"] is None for r in filtrados):
+            return 1
+        print("%.2f" % sum(r["coste"] for r in filtrados))
         return 0
 
     por_sesion, por_modelo, por_dia = {}, {}, {}
