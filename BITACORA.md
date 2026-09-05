@@ -161,6 +161,9 @@ separan sin avisar: se quita explícita. Casos 12 a 15 del banco.
   de 45. La auditoría son 2,5 de esos 36: **el resto es red** (índice de 41 repos, `ssh`,
   la comprobación del `CLAUDE.md` canónico). Es un problema distinto y más gordo que el que
   se acaba de arreglar.
+- Sigue vivo lo de la sección 7 de la entrada de abajo (sesiones que cruzan entre carpetas
+  normales).
+
 ### 9. EL BUCLE DE LA MEDICIÓN DE COSTE ESTABA ABIERTO. Cerrado
 
 Lo destapó una pregunta de Oscar —*«¿dónde voy a ver yo los resultados de esto que mide el
@@ -193,11 +196,45 @@ Llamarlo «función nueva» era una forma de dejarlo enterrado con permiso.
   devuelve 1 y no imprime, y el aviso sale sin la frase del dinero en vez de con un cero
   que se leería «gratis». Es el tercer estado del auditor, aplicado aquí.
 
-Queda vivo, y ahora sí dicho como lo que es: **`sueno.sh` sigue sin lanzarlo nadie**, y el
-umbral sigue **congelado** — `calibrar-umbral.py` lo recalcularía, pero hay que ejecutarlo
-a mano y se ejecutó una vez.
-- Sigue vivo lo de la sección 7 de la entrada de abajo (sesiones que cruzan entre carpetas
-  normales).
+### 10. Y el sueño tampoco estaba sin tarea: estaba sin DESTINATARIO
+
+Preguntado por Oscar acto seguido: *«lo que hace el sueño no está orientado a una tarea, o
+la tarea era hacer el HTML y como no lo hace, está sin tarea»*. **Comprobado, y no.** El
+dashboard nunca fue trabajo del sueño: es una cosa aparte, **descartada a propósito** y ya
+escrita en este fichero («la página se monta el día que se eche de menos, no antes»).
+
+El sueño hace su trabajo y lo hace bien: ha corrido dos veces y el informe del 5-sep trae
+**8 propuestas reales**, con la cuenta de días que lleva repitiéndose cada una — entre
+ellas una sesión de **1.323 turnos** de `agentes-lizar` sin anotar desde el 25-ago, por
+segundo día. Lo que no tenía es **a quién entregárselo**: escribía el fichero y no lo abría
+nadie.
+
+**Tercera vez el mismo día con el mismo fallo.** El auditor ya lo tenía resuelto, el
+contable se enganchó esta noche, y esto era lo que quedaba. El arranque inyecta ahora **una
+línea** con la ruta y el número de propuestas — nunca el contenido, y eso no es tacañería:
+está medido en la entrada del contable que inyectar ~300 tokens por prompt en una sesión de
+200 turnos sale del orden de **3 $ por sesión**, más que el gasto que vigila. Mismo patrón
+que el borrador mecánico: se da el camino, lo abre quien vaya a decidir. Y si el informe
+más nuevo tiene más de dos días **no se nombra**, porque un puntero a un informe viejo se
+lee como si fuera de hoy.
+
+### 11. CORRECCIÓN sobre el umbral: no estaba congelado, y lo dije sin mirar
+
+Escribí más arriba que el umbral de 200.000 estaba «congelado porque `calibrar-umbral.py`
+hay que ejecutarlo a mano». **Falso, y comprobado después:** ese script **no calcula los
+200.000**. Lo que hace es justificar que la métrica sea *tokens* y no *megabytes*, y su
+único umbral configurable es el viejo de 2 MB, ya retirado. Los 200.000 salen del análisis
+económico del 31-ago, que vive en el `CLAUDE.md`.
+
+Ejecutado hoy sobre las sesiones que hay en disco: **rho(bytes, tokens) = 0,927**, el mismo
+que el 29-ago. La conclusión aguanta y no había nada que descongelar. Dos correcciones en
+la misma entrada por el mismo motivo — nombrar una consecuencia sin abrir el fichero.
+
+**Lo único que de verdad queda abierto**: `sueno.sh` no lo lanza nadie a diario. No es un
+olvido de diseño —su cabecera dice explícitamente que NO debe ir a un hook, porque su
+salida en cada arranque se pagaría en cada turno— sino que falta crear la tarea en el
+Programador de tareas de Windows, que es cosa del humano y está documentada en la propia
+cabecera del script.
 
 ### Comprobado
 

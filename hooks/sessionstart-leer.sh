@@ -977,6 +977,45 @@ a mano -- esto no quiere decir que no hubiera nada que anotar.)
   fi
 fi
 
+# ---------- 1c-bis. El informe del sueño: SOLO la ruta, nunca el contenido ----------
+# EL SUEÑO NO ESTABA SIN TAREA, ESTABA SIN DESTINATARIO. Preguntado por Oscar el
+# 5-sep-2026: scripts/sueno.sh recorre todos los repos, cruza el auditor con el contable y
+# con git, y escribe un informe con propuestas de verdad -- el del 5-sep traía una sesión
+# de 1.323 turnos de 'agentes-lizar' sin anotar desde el 25-ago, y por segundo día. El
+# fichero se escribía y no lo abría nadie.
+#
+# Es el MISMO fallo por tercera vez el mismo día: una pieza que mide bien y no llega a
+# quien decide. El auditor ya lo tenía resuelto; el contable se enganchó al aviso de
+# contexto esa misma noche; esto es lo que quedaba.
+#
+# SOLO LA RUTA, Y ESO NO ES TACAÑERÍA. Está medido y escrito en la BITACORA.md (entrada
+# del contable): inyectar ~300 tokens de resumen en cada prompt de una sesión de 200
+# turnos se acumula hasta del orden de 3 $ por sesión -- más de lo que costaría el gasto
+# que pretende vigilar. Por eso aquí va una línea con la ruta y el número de propuestas,
+# igual que con el borrador mecánico: quien decida abrirlo, lo abre.
+#
+# Y NO SE INVENTA FRESCURA: si el informe más nuevo tiene más de dos días, no se nombra.
+# Un puntero a un informe viejo se lee como si fuera de hoy, y eso es peor que no darlo.
+SUENOS_DIR="${BITACORA_SUENOS:-$HOME/.claude/bitacora-suenos}"
+if [ -d "$SUENOS_DIR" ]; then
+  SUENO_F=$(find "$SUENOS_DIR" -maxdepth 1 -name '*.md' -newermt "-2 days" 2>/dev/null | sort | tail -1)
+  if [ -n "$SUENO_F" ] && [ -f "$SUENO_F" ]; then
+    N_PROP=$(grep -c '^### PROPUESTA' "$SUENO_F" 2>/dev/null || true)
+    N_PROP=${N_PROP:-0}
+    if [ "$N_PROP" -gt 0 ] 2>/dev/null; then
+      SALIDA="${SALIDA}=== HAY INFORME DEL SUEÑO SIN LEER: $N_PROP propuesta(s) ===
+$SUENO_F
+
+Lo escribió scripts/sueno.sh recorriendo TODOS los repos, no solo éste. No lo pego aquí
+a propósito (inyectar el informe entero en cada arranque cuesta más que el gasto que
+vigila): ábrelo con Read si vas a decidir algo. Nadie ha ejecutado nada de lo que
+propone -- el sueño observa y propone, nunca ejecuta.
+
+"
+    fi
+  fi
+fi
+
 # ---------- 1d. CLAUDE.md: tu copia local contra la canónica ----------
 # VA AQUÍ Y NO JUNTO A 2c, QUE ES SU FAMILIA, POR UNA RAZÓN MEDIDA: el techo global de
 # la sección 4 recorta POR EL FINAL, y con esta sección colocada detrás de 2c el aviso
