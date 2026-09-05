@@ -85,11 +85,14 @@ que la cabecera de `sincronizar-webhooks.sh` decía que no existía. Cabecera co
 - Los webhooks del punto 1 no sobran, pero son **un segundo aviso del mismo push**, no lo
   que sostiene el arranque. Es inofensivo: el receptor reescribe la misma fila con el
   mismo SHA.
-- **Sin verificar, y es lo único que queda abierto:** el alcance literal de la App
-  («All repositories» o una lista escogida). Esa página pide reautenticación por correo,
-  que la tiene que hacer Oscar. Que cubriera dos repos creados *después* de instalarla
-  apunta a «All repositories», pero apuntar no es comprobar, y de eso depende si
-  `sincronizar-webhooks.sh` sigue haciendo falta para los repos futuros.
+- **Confirmado por Oscar el 06/09, y con esto no queda nada abierto:** la App está en
+  **«All repositories»**. Cubre sola los repos que se creen en el futuro, así que
+  `sincronizar-webhooks.sh` deja de ser lo que engancha un repo nuevo: pasa a red de
+  seguridad —el segundo camino si algún día se desinstala la App— y a auditoría con
+  `--revisar`. Efecto colateral asumido: cada push llega ahora **dos veces** al receptor,
+  por la App y por el webhook del repo, que reescribe la misma fila con el mismo SHA. Se
+  conservan los dos caminos a propósito: un aviso duplicado cuesta menos que un arranque
+  mudo, y son fallos independientes.
 
 **La lección, que es la de siempre en este repo:** el fallo no fue de razonamiento sino de
 no mirar el artefacto. Bastaba abrir `estado.txt` —el sitio donde se ve el efecto— en vez

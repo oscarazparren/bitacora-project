@@ -24,10 +24,10 @@
 # de GitHub que ningún webhook de esos repos pudo mandar. Lo que crea este script es,
 # entonces, un SEGUNDO aviso del mismo push: no estorba —el receptor reescribe la misma
 # fila con el mismo SHA— pero tampoco es lo que sostiene el arranque.
-# SIN VERIFICAR: el alcance literal de la App ("All repositories" o una lista escogida).
-# Esa página pide reautenticación por correo y la tiene que abrir Oscar. Que cubriera
-# dos repos creados DESPUÉS de instalarla apunta a "All repositories", pero apuntar no
-# es comprobar. Mientras no se confirme, este script es la red, no el mecanismo.
+# ALCANCE CONFIRMADO por Oscar el 06/09/2026: la App está en "All repositories", o sea
+# que cubre sola los repos que se creen en el futuro. Consecuencia para este script: ya
+# NO es lo que engancha un repo nuevo. Queda como red de seguridad —el segundo camino si
+# algún día se desinstala la App— y como auditoría, que es para lo que sirve --revisar.
 #
 # EL DEFECTO ES "TODOS", Y ES A PROPÓSITO. La primera versión de este script leía por
 # defecto la lista de repos.txt, escrita a mano cuando cada repo vigilado costaba ~4s de
