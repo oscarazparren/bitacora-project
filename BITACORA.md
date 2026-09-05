@@ -11,6 +11,65 @@ Formato: `## AAAA-MM-DD — [dispositivo] titular`
 
 ---
 
+## 2026-09-05 — [PC viejo] Corrección: el «caso monorepo» que justifica el prefijo del auditor NO existe en esta máquina, y el radio del fallo es un solo repo
+
+Corrige la entrada de ayer, «El sueño». El fallo descrito ahí es real y sigue siéndolo;
+lo que estaba mal es **la premisa con la que lo expliqué**, y eso cambia el arreglo.
+
+### Lo que escribí sin comprobar
+
+> El auditor busca las carpetas de transcripts por PREFIJO […] para cubrir las sesiones
+> abiertas en una SUBCARPETA del repo, que es el caso monorepo de `agentes-lizar`.
+
+Esa frase no la medí: **la copié del comentario que el propio `auditar-sesiones.sh` lleva
+dentro**, y la di por buena porque estaba escrita en el código. Es exactamente el fallo
+que persigue la regla «verificar antes de afirmar» del `CLAUDE.md` — dar por bueno un
+comentario en vez de mirar el artefacto — cometido dentro de una entrada que presumía de
+medirlo todo.
+
+### Lo que hay de verdad en el disco (5-sep-2026, PC viejo)
+
+- **Cero carpetas de transcripts que sean subcarpeta real de un repo.** Ninguna. El
+  ejemplo del comentario (`C--Users-Oscar-repos-x-agentes-informes`) no existe.
+- Lo único que casa por prefijo y **debe** seguir casando son los **worktrees de
+  Claude**: `C--Users-Oscar-repos-agentes-lizar--claude-worktrees-clever-cannon-668c9a` y
+  `...--claude-worktrees-interesting-panini-7b5967`. Un worktree es el mismo repo y la
+  misma `BITACORA.md`, así que atribuirle sus sesiones al repo principal es correcto.
+- **El radio del fallo es UN repo de 41.** Comparados todos los nombres de `~/repos`, el
+  único que es prefijo estricto de otro es `bitacora`, que se lleva las sesiones de
+  `bitacora-flota` y `bitacora-project`. No hay más colisiones.
+
+### Qué cambia para el arreglo pendiente
+
+El comodín `"$patron"-*` no está sosteniendo un caso general de monorepo: está sosteniendo
+un caso concreto y con nombre propio, `--claude-worktrees-*` (doble guion). El arreglo
+puede ser mucho más estrecho de lo que dejé escrito ayer. Dos candidatos, y la elección
+sigue siendo trabajo de la sesión que lo haga:
+
+1. **Aceptar solo lo que se reconoce**: coincidencia exacta, más `"$patron"--claude-worktrees-*`.
+   Estrecho, barato de probar y no depende de qué repos existan.
+2. **Rechazar el sufijo que sea otro repo**: aceptar `"$patron"-*` salvo cuando el sufijo
+   corresponda a un repo que existe. Más general, pero el auditor NO tiene delante la
+   lista de repos (el sueño sí, y por eso allí fue fácil), así que habría que dársela.
+
+**Y hay que rehacer la medición en el PC Nuevo antes de decidir**: el reparto de carpetas
+puede no ser el mismo, y si allí sí hay sesiones abiertas en subcarpetas, la opción 1 las
+dejaría fuera en silencio — que es la dirección mala.
+
+### De paso: `agentes-lizar` está VIVO
+
+Surgió porque se dio por hecho que era un repo muerto, de los que se sacaron los agentes.
+Comprobado: **no está archivado** en GitHub, es privado, y su último commit es del
+**4-sep-2026** («auditoría completa de LIZAR del 04/09, 5 rojos y 13 ámbar»), con
+commits de las dos máquinas el 25 y el 31 de agosto. Lo que salió de ahí fueron los
+agentes, a sus repos `lizar-*`; lo que queda —`docs/`, `legal/`, `panel/`, `supabase/`,
+`tools/`, `transcriptor/`— sigue en uso. Sus dos carpetas sin rastrear (`panel/`,
+`tools/escaner-aeo/`) son del 25 de agosto.
+
+Se anota porque tratar como archivado un repo que no lo está es la trampa que ya describe
+el `CLAUDE.md` al revés: alguien edita el que cree vivo y el cambio se queda huérfano.
+
+
 ## 2026-09-04 — [PC viejo] El sueño: `scripts/sueno.sh` repasa de noche los 41 repos y PROPONE, y al construirlo destapa un fallo del auditor
 
 Segunda pieza del «motor agéntico» del vídeo, la que quedaba pendiente en la entrada de
