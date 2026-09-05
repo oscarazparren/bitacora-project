@@ -11,6 +11,108 @@ Formato: `## AAAA-MM-DD — [dispositivo] titular`
 
 ---
 
+## 2026-09-05 — [PC viejo] Los transcripts llevan dentro el `cwd`: la transformación de rutas deja de adivinarse, y la premisa de la tarea era falsa
+
+Continúa la entrada de aquí abajo. Iba a ser un `sed` de un carácter y ha salido otra
+cosa, porque **el método cambió**: cada `.jsonl` guarda el `cwd` que lo generó, así que la
+correspondencia (carpeta de proyecto ↔ ruta real) **se lee, no se deduce del nombre**.
+Leídos los 23 pares de esta máquina, tres conclusiones y una corrección.
+
+### 1. La transformación real, medida
+
+Claude Code manda a `-` también el **espacio** y el **punto**, no solo `:`, `/` y `\`:
+
+```
+C:\Users\Oscar\LIZAR AEO                        -> C--Users-Oscar-LIZAR-AEO
+C:\Users\Oscar\repos\CSV Generator              -> C--Users-Oscar-repos-CSV-Generator
+C:\Users\Oscar\repos\z-api Whatsapp             -> C--Users-Oscar-repos-z-api-Whatsapp
+C:\Users\Oscar\Desktop\Kangurea MATERIAL WEB    -> c--Users-...-Kangurea-MATERIAL-WEB
+...\agentes-lizar\.claude\worktrees\clever-...  -> ...-agentes-lizar--claude-worktrees-clever-...
+```
+
+El último par **explica el doble guion de los worktrees**, que ayer traté como un nombre
+especial: no lo es, es `\` + `.`. No se generaliza a «todo lo no alfanumérico» porque de
+`_`, `(` y `[` no hay ni un par observado.
+
+### 2. CORRECCIÓN: lo que escribí ayer sobre `CSV Generator` era falso
+
+Dije que el auditor «calcula `...-repos-CSV Generator` y sale `NO-SE-PUDO-COMPROBAR`».
+El patrón sí lo comprobé; **la consecuencia no**. Comprobada hoy:
+
+```
+NO-APLICA: /c/Users/Oscar/repos/CSV Generator no está dentro de una copia de trabajo de git.
+```
+
+`CSV Generator` **no es un repo git y no tiene bitácora**, así que el auditor sale por la
+primera puerta y nunca llega al patrón. El fallo del espacio era real pero **latente: cero
+casos vivos**. Segunda vez en dos días que verifico el mecanismo y doy por buena la
+consecuencia sin mirarla — y las dos veces dentro de una entrada que presumía de medir.
+
+### 3. Lo que sí tenía consecuencia viva era el PUNTO
+
+Hay **dos worktrees en disco** (`kangurea-web`, `lizar-informes`). Auditar desde dentro
+de uno —lo que hace el hook si abres sesión ahí, porque `git rev-parse --show-toplevel`
+devuelve la ruta del worktree, con `.claude` dentro— daba:
+
+| | antes | después |
+|---|---|---|
+| `kangurea-web/.claude/worktrees/charming-chatelet-179416` | `NO-SE-PUDO-COMPROBAR` | `ANOTADA, 104t` |
+| `lizar-informes/.claude/worktrees/strange-bohr-1dfebc` | `NO-SE-PUDO-COMPROBAR` | `ANOTADA, 170t` |
+
+### 4. Y el arreglo destapó que había TRES sitios calculando el patrón
+
+`auditar-sesiones.sh`, `sueno.sh` (para `duena_de`) y `sessionstart-leer.sh` (para
+reconstruir la ruta del transcript actual en `compact`). Arreglar solo el auditor
+**habría creado un fallo silencioso nuevo**: el sueño descartaría sin decir nada la deuda
+de una carpeta que el auditor sí supo encontrar. Los tres sincronizados, y **caso 11 del
+banco que compara los tres por texto** — visto fallar a propósito, dice qué dos versiones
+hay. Es la protección que faltaba: el comentario del propio sueño ya avisaba de que dos
+sitios calculando lo mismo se separan, y no había nada que lo impidiera.
+
+### 5. LO GORDO, que NO se arregla aquí: la carpeta `C--`
+
+Al leer los `cwd` aparece un agujero mucho mayor que el del espacio. Las carpetas `C--` y
+`C--Users-Oscar` —sesiones abiertas en `C:\` o en el home— contienen **7 sesiones que
+trabajaron dentro de repos con bitácora**, invisibles para el auditor y para el sueño:
+
+```
+6d2602f2  328t  29-ago  bitacora-flota bitacora-project lizar-flota
+ad544252  264t  26-ago  bitacora-flota bitacora-project kangurea-web
+f4cba7eb  230t  02-sep  AlcoholTax-IA bitacora-flota bitacora-project lizar-asistente-aula lizar-flota lizar-informes
+da874417  194t  28-ago  lizar-correo lizar-flota lizar-panel
+b1e213da   77t  02-sep  bitacora-flota
+fb1c78cd   59t  04-sep  agentes-lizar
+3d862cd1   14t  28-ago  agentes-lizar lizar-flota
+```
+
+**Ningún `sed` arregla esto**, porque el nombre de la carpeta es correcto: la sesión
+empezó en `C:\`. Y rompe el modelo de raíz: hoy es *un transcript, un repo*, y aquí hay
+una sesión que tocó **seis**. Son justo las sesiones que incumplen la regla «un chat por
+repo» del `CLAUDE.md`, así que la pregunta de diseño no es cómo repartirlas, sino si el
+auditor debe **decir que no puede juzgarlas** —tercer estado, que para eso está— en vez
+de callarlas. Necesita su sesión y su decisión.
+
+### 6. Y un fallo de método mío, que casi cuela
+
+La primera medición de esto **dio cero**: «ninguna sesión de `C--` trabajó en un repo».
+Falso. Mi filtro llevaba barras invertidas y la capa de `eval` de mi herramienta se las
+comió, así que no casaba nada y devolvía una lista vacía. Lo pillé **solo porque
+contradecía una medición agregada anterior**. Un filtro roto y un «no hay nada» se leen
+igual — es la forma exacta del fallo que persigue este repo, cometido con la herramienta
+de medir. Se rehízo con `tr '\134' '/'`, sin barras invertidas.
+
+### Comprobado
+
+Banco: **24 ok** (11 nuevos vistos fallar antes). Banco de la `1d`: **23 ok**. Los 20
+repos con bitácora, antes y después: **cero cambios**. Sintaxis de los cuatro ficheros.
+
+### Nota de campo
+
+Durante la sesión apareció el repo `lizar-cuentas-claras` y commits de hace minutos en
+`LIZAR-AIA-WEB`, `lizar-jarvis`, `lizar-panel` y `lizar-puente`: **había otra sesión
+trabajando a la vez**. No tocó `bitacora-project`.
+
+
 ## 2026-09-05 — [PC viejo] El auditor deja de robar sesiones ajenas: solo acepta lo que reconoce, y dice en voz alta lo que descarta
 
 Cierra el pendiente que dejaron abierto las dos entradas de abajo. `auditar-sesiones.sh`

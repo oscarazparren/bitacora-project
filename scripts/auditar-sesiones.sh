@@ -82,6 +82,27 @@ fi
 # Claude Code nombra la carpeta de proyecto transformando la ruta: 'C:\Users\Oscar\repos\x'
 # -> 'C--Users-Oscar-repos-x'.
 #
+# QUÉ CARACTERES SE TRADUCEN, Y CÓMO SE SUPO. No se deduce del nombre: cada transcript
+# lleva dentro el 'cwd' que lo generó, así que la correspondencia (carpeta, ruta real) se
+# LEE. Medido el 5-sep-2026 sobre las 23 carpetas de esta máquina:
+#
+#   C:\Users\Oscar\LIZAR AEO                       -> C--Users-Oscar-LIZAR-AEO
+#   C:\Users\Oscar\repos\CSV Generator             -> C--Users-Oscar-repos-CSV-Generator
+#   C:\Users\Oscar\repos\z-api Whatsapp            -> C--Users-Oscar-repos-z-api-Whatsapp
+#   C:\Users\Oscar\Desktop\Kangurea MATERIAL WEB   -> c--Users-...-Kangurea-MATERIAL-WEB
+#   ...\agentes-lizar\.claude\worktrees\clever-... -> ...-agentes-lizar--claude-worktrees-clever-...
+#
+# O sea: el ESPACIO y el PUNTO también van a '-'. Hasta hoy solo se traducían ':', '/' y
+# '\', y eso dejaba '~/repos/CSV Generator' entero invisible -- un repo de 44, siempre
+# NO-SE-PUDO-COMPROBAR. El punto además explica el doble guion de los worktrees: no es un
+# nombre especial, es '\' + '.'; sin traducirlo, auditar DESDE dentro de un worktree
+# calculaba un patrón con un '.' que ninguna carpeta tiene.
+#
+# NO se generaliza a "todo lo no alfanumérico". De '_', '(' y '[' no hay ni un par
+# observado, y ampliar el sed a ojo arriesga los 43 repos que hoy sí casan a cambio de un
+# caso imaginario: sería cambiar un fallo ruidoso (NO-SE-PUDO-COMPROBAR, que se ve) por
+# uno silencioso. Si algún día aparece uno, se mide igual que éstos y se añade aquí.
+#
 # SOLO SE ACEPTA LO QUE SE RECONOCE. Hasta el 5-sep-2026 esto casaba por prefijo abierto
 # ('$patron' y '$patron'-*), y el comentario que lo justificaba hablaba de sesiones
 # abiertas en una SUBCARPETA del repo, "el caso monorepo de agentes-lizar". Ese caso NO
@@ -111,7 +132,7 @@ fi
 # aquí: si alguna máquina tuviera sesiones en una subcarpeta, quedarían fuera EN
 # SILENCIO, que es la dirección que este proyecto persigue. No quedan: se nombran.
 ruta_win=$(cd "$RAIZ" && pwd -W 2>/dev/null || echo "$RAIZ")
-patron=$(printf '%s' "$ruta_win" | sed 's#[:/\\]#-#g')
+patron=$(printf '%s' "$ruta_win" | sed 's#[:/\\ .]#-#g')
 
 # Array y no cadena: 'dirs' acaba en un 'for' sin comillas, y una ruta con espacio
 # —'~/repos/CSV Generator' existe— se partiría en dos rutas rotas.

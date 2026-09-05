@@ -76,11 +76,24 @@ else
 fi
 RUNNER
 
-# La misma transformación de ruta que hace Claude Code al nombrar la carpeta de
-# proyecto. Se usa SOLO para construir el fixture, nunca para decidir.
+# La transformación que hace Claude Code al nombrar la carpeta de proyecto. NO se copia
+# del auditor: se dedujo el 5-sep-2026 de pares (carpeta observada, cwd real) leídos de
+# los propios transcripts, que llevan el 'cwd' dentro y son la verdad de campo:
+#
+#   C:\Users\Oscar\LIZAR AEO                        -> C--Users-Oscar-LIZAR-AEO
+#   C:\Users\Oscar\repos\CSV Generator              -> C--Users-Oscar-repos-CSV-Generator
+#   C:\Users\Oscar\repos\z-api Whatsapp             -> C--Users-Oscar-repos-z-api-Whatsapp
+#   C:\Users\Oscar\Desktop\Kangurea MATERIAL WEB    -> c--Users-...-Kangurea-MATERIAL-WEB
+#   ...\agentes-lizar\.claude\worktrees\clever-...  -> ...-agentes-lizar--claude-worktrees-clever-...
+#
+# El último par es el que explica el doble guion de los worktrees: no es un nombre
+# especial, es '\' + '.'. Espacio y punto van a '-' igual que ':', '/' y '\'.
+# NO hay evidencia observada para '_', '(' ni '[', así que no se tocan.
+#
+# Se usa SOLO para construir el fixture, nunca para decidir.
 patron_de() {  # patron_de <dir> -> nombre de carpeta de proyecto
   local rw; rw=$(cd "$1" && pwd -W 2>/dev/null || printf '%s' "$1")
-  printf '%s' "$rw" | sed 's#[:/\\]#-#g'
+  printf '%s' "$rw" | sed 's#[:/\\ .]#-#g'
 }
 
 PROY="$TMP/proyectos"
@@ -233,6 +246,61 @@ R_SOLOPRE=$(repo solo); repo solo-otro >/dev/null; carpeta "$REPOS/solo-otro"
 O8=$(correr "$R_SOLOPRE")
 espera         "8a solo hermanos ajenos -> NO-SE-PUDO-COMPROBAR" "NO-SE-PUDO-COMPROBAR" "$O8"
 espera_ninguna "8b solo hermanos ajenos -> cero carpetas"        "$O8"
+
+# =========================================================================
+# CARACTERES QUE EL NOMBRE DE CARPETA NO CONSERVA
+# =========================================================================
+# Medido el 5-sep leyendo el 'cwd' de los transcripts, no supuesto. Hasta entonces el
+# auditor solo traducía ':', '/' y '\', así que para '~/repos/CSV Generator' calculaba
+# un patrón con el espacio dentro, no encontraba nada y salía NO-SE-PUDO-COMPROBAR.
+# Un repo entero invisible, de 44.
+R_ESP=$(repo "CSV Generator")
+carpeta "$R_ESP"
+O9=$(correr "$R_ESP")
+espera_dirs "9a repo con ESPACIO en el nombre" "$O9" "=" "$R_ESP"
+espera_no   "9b y no se queja de no encontrarlo" "NO-SE-PUDO-COMPROBAR" "$O9"
+
+# El punto importa por sí solo: si se audita DESDE dentro de un worktree,
+# 'git rev-parse --show-toplevel' devuelve la ruta del worktree, que lleva '.claude'.
+# Sin traducir el punto, el patrón salía con un '.' que ninguna carpeta tiene.
+R_DEN=$(repo con-worktree)
+DENTRO="$R_DEN/.claude/worktrees/clever-cannon-668c9a"
+mkdir -p "$DENTRO"
+carpeta "$DENTRO"
+O10=$(correr "$DENTRO")
+espera_dirs "10a auditar DESDE dentro de un worktree" "$O10" "=" "$DENTRO"
+espera_no   "10b y no se queja de no encontrarlo"     "NO-SE-PUDO-COMPROBAR" "$O10"
+
+# Y el nombre que sale de ahí es exactamente el que se ve en el disco real.
+if [ "$(patron_de "$DENTRO")" = "$(patron_de "$R_DEN")--claude-worktrees-clever-cannon-668c9a" ]; then
+  printf '  ok    %s\n' "10c el patrón del worktree coincide con el del repo + sufijo"; PASA=$((PASA + 1))
+else
+  printf '  FALLA %s\n        %s\n' "10c el patrón del worktree coincide con el del repo + sufijo" "$(patron_de "$DENTRO")"
+  FALLA=$((FALLA + 1))
+fi
+
+# =========================================================================
+# LOS TRES SITIOS QUE CALCULAN EL PATRÓN NO PUEDEN SEPARARSE
+# =========================================================================
+# El auditor no es el único que traduce una ruta a nombre de carpeta: sueno.sh lo hace
+# para decidir de quién es cada transcript, y sessionstart-leer.sh para reconstruir la
+# ruta del transcript actual cuando no le llega por stdin. Si uno cambia y los otros no,
+# el sueño DESCARTA EN SILENCIO la deuda de una carpeta que el auditor sí encontró --
+# la dirección mala. Se comprueba por texto, que es lo único que no se puede olvidar.
+RAIZ_REPO="$(cd "$AQUI/.." && pwd)"
+patrones_hallados=$(grep -rhoE "sed 's#\[[^]]*\]#-#g'" \
+  "$RAIZ_REPO/scripts/auditar-sesiones.sh" \
+  "$RAIZ_REPO/scripts/sueno.sh" \
+  "$RAIZ_REPO/hooks/sessionstart-leer.sh" 2>/dev/null | sort -u)
+n_distintos=$(printf '%s\n' "$patrones_hallados" | sed '/^$/d' | wc -l | tr -dc '0-9')
+if [ "$n_distintos" = "1" ]; then
+  printf '  ok    %s\n' "11 los 3 sitios usan la MISMA transformación"; PASA=$((PASA + 1))
+else
+  printf '  FALLA %s\n        se han separado, hay %s versiones:\n%s\n' \
+    "11 los 3 sitios usan la MISMA transformación" "$n_distintos" \
+    "$(printf '%s\n' "$patrones_hallados" | sed 's/^/          /')"
+  FALLA=$((FALLA + 1))
+fi
 
 echo
 echo "  $PASA ok, $FALLA falla(s)"

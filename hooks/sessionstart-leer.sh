@@ -96,7 +96,9 @@ if [ "$SOURCE" = "compact" ]; then
   T_ACTUAL="$TRANSCRIPT_ACTUAL"
   if [ -z "$T_ACTUAL" ] && [ -n "$SESION_ID" ]; then
     PROY="${BITACORA_PROYECTOS:-$HOME/.claude/projects}"
-    T_ACTUAL="$PROY/$(printf '%s' "$(pwd -W 2>/dev/null || pwd)" | sed 's#[:/\\]#-#g')/$SESION_ID.jsonl"
+    # Transformación SINCRONIZADA con auditar-sesiones.sh, donde está medida y razonada
+    # (espacio y punto también van a '-'). El banco lo comprueba (caso 11).
+    T_ACTUAL="$PROY/$(printf '%s' "$(pwd -W 2>/dev/null || pwd)" | sed 's#[:/\\ .]#-#g')/$SESION_ID.jsonl"
   fi
 
   BORRADOR_SH=""

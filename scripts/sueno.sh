@@ -241,7 +241,10 @@ AUDITOR="$AQUI/auditar-sesiones.sh"
 PATRONES=$(mktemp)
 for repo in $REPOS; do
   rw=$(cd "$repo" && pwd -W 2>/dev/null || echo "$repo")
-  printf '%s\t%s\t%s\n' "${#rw}" "$(printf '%s' "$rw" | sed 's#[:/\\]#-#g')" "$repo" >> "$PATRONES"
+  # La transformación va SINCRONIZADA con la de auditar-sesiones.sh, que es donde está
+  # razonada y medida. Si divergen, este filtro descarta EN SILENCIO la deuda de una
+  # carpeta que el auditor sí supo encontrar. El banco lo comprueba (caso 11).
+  printf '%s\t%s\t%s\n' "${#rw}" "$(printf '%s' "$rw" | sed 's#[:/\\ .]#-#g')" "$repo" >> "$PATRONES"
 done
 sort -rn -o "$PATRONES" "$PATRONES" 2>/dev/null
 
