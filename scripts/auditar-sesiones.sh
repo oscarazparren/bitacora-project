@@ -131,8 +131,14 @@ fi
 # Y LO QUE SE DESCARTA SE DICE (ver más abajo). Es la única objeción seria a estrechar
 # aquí: si alguna máquina tuviera sesiones en una subcarpeta, quedarían fuera EN
 # SILENCIO, que es la dirección que este proyecto persigue. No quedan: se nombran.
+#
+# La transformación vive en UNA función y no repetida, porque aquí ya se usa dos veces:
+# para el patrón de este repo y para el de cada carpeta ancestro (más abajo). Dos copias
+# en el mismo fichero se separan igual de bien que dos copias en ficheros distintos.
+patron_de() { printf '%s' "$1" | sed 's#[:/\\ .]#-#g'; }
+
 ruta_win=$(cd "$RAIZ" && pwd -W 2>/dev/null || echo "$RAIZ")
-patron=$(printf '%s' "$ruta_win" | sed 's#[:/\\ .]#-#g')
+patron=$(patron_de "$ruta_win")
 
 # Array y no cadena: 'dirs' acaba en un 'for' sin comillas, y una ruta con espacio
 # —'~/repos/CSV Generator' existe— se partiría en dos rutas rotas.
@@ -155,7 +161,162 @@ if [ "${#ajenas[@]}" -gt 0 ]; then
   echo "  Si alguna de éstas fuera de verdad este repo, sus sesiones NO se están juzgando."
 fi
 
+# ---------- Las sesiones que NO pertenecen a un solo repo ----------
+# Medido el 5-sep-2026 en el PC viejo: las carpetas 'C--' y 'C--Users-Oscar' -- las de las
+# sesiones abiertas en la raíz del disco o en el home -- guardan 7 sesiones que trabajaron
+# dentro de repos con bitácora, y eran INVISIBLES aquí y en el sueño. No las alcanza
+# ningún arreglo de la transformación: el nombre de su carpeta es CORRECTO, la sesión
+# empezó ahí. Lo que rompen es el modelo de raíz, que era "un transcript, un repo".
+#
+# SE DECLARAN, NO SE REPARTEN. La razón no es de gusto: el auditor NO PUEDE saber. Su
+# prueba de ANOTADA es "hay un commit que toca ESTA bitácora en la ventana", y eso no
+# distingue "anotó donde tocaba" de "no anotó". Una sesión que recorrió seis repos y dejó
+# UNA entrada correcta saldría ANOTADA en uno y SIN-ANOTAR en los otros cinco: deuda falsa
+# a razón de cinco por sesión. Y la deuda falsa se deja de leer -- momento en el cual la
+# deuda de verdad también es silenciosa. Es el fallo de siempre, alcanzado por el lado
+# ruidoso. "No lo sé" es aquí la respuesta VERDADERA, no la cómoda; para eso está el
+# tercer estado.
+#
+# LOS NÚMEROS LO REMATAN. En las 7, la mayoría de los turnos no está en ningún repo: 268
+# de 328, 88 de 264, 99 de 194, 49 de 59. Las colas por repo son minúsculas -- la sesión
+# de 230 turnos pisó 'lizar-asistente-aula' UN turno y 'AlcoholTax-IA' dos. Repartir
+# cobraría a seis bitácoras una entrada por eso.
+#
+# Y son, por construcción, las sesiones que incumplen "un chat por repo" del CLAUDE.md.
+# El remedio de una sesión que tocó seis repos no son seis entradas: es no haberla tenido
+# así. Un auditor que exigiera las seis convertiría el incumplimiento en rutina.
+#
+# DÓNDE SE BUSCAN, Y POR QUÉ SOLO AHÍ. En las carpetas ANCESTRO: las de los directorios
+# que CONTIENEN a este repo ('C--Users-Oscar-repos', 'C--Users-Oscar', 'C--'). Es una
+# prueba léxica sobre la misma ruta, no necesita la lista de repos de la máquina -- que
+# aquí no hay-- y da la misma respuesta en las dos. No se barren TODAS las carpetas de
+# proyecto a propósito: existe el mismo fenómeno en carpetas normales (medido: una sesión
+# de 142 turnos de 'lizar-flota' pasó 29 turnos en 'bitacora-flota'), pero cubrirlo obliga
+# a leer los transcripts de las 24 carpetas en CADA arranque, con 25 s de presupuesto y
+# 45 de plazo duro. Así se reconstruye la avería del 28-ago. Ese caso necesita su propia
+# decisión; queda dicho aquí y no fingido.
+#
+# EL UMBRAL PARA NOMBRARLAS ES EL QUE YA HAY. UMBRAL_TURNOS significa "por debajo de esto
+# no hay nada que anotar", que es exactamente la pregunta, y está calibrado. Inventar aquí
+# un número nuevo sería elegirlo a ojo.
+#
+# EL PATRÓN DEL ANCESTRO NO SE CALCULA: SE RECORTA. La transformación cambia un carácter
+# por otro, así que CONSERVA LA LONGITUD, y el patrón de un directorio que contiene a
+# éste es exactamente el prefijo de '$patron' con tantos caracteres como tiene su ruta.
+# 'C:/Users/Oscar/repos' son 20 -> 'C--Users-Oscar-repos'. 'C:/' son 3 -> 'C--'.
+#
+# No es un atajo: es la forma de que aquí NO haya una segunda traducción que pueda
+# separarse de la primera -- el fallo que vigila el caso 11 del banco, evitado por
+# construcción en vez de por vigilancia.
+#
+# Y de paso quita ocho procesos. Medido en esta máquina el 5-sep-2026, un 'printf | sed'
+# dentro de una sustitución de órdenes cuesta ~610 ms en Git Bash; las ocho llamadas que
+# tenía la primera versión de este bucle costaban 5,5 s ELLAS SOLAS, en un script al que
+# el hook de arranque le da 8 segundos entre todo. Este bucle ya no lanza ni uno.
+ancestros=()
+resto="$ruta_win"
+while [ -n "$resto" ]; do
+  padre=${resto%[/\\]*}
+  [ "$padre" = "$resto" ] && break            # ya no queda separador que quitar
+  [ -n "$padre" ] || padre="/"                # '/home' -> la raíz de un Unix
+  raiz_alcanzada=no
+  case "$padre" in
+    ?:) padre="$padre/"; raiz_alcanzada=si ;; # 'C:' no es una ruta; 'C:/' sí, y da 'C--'
+    /)  raiz_alcanzada=si ;;
+  esac
+  p=${patron:0:${#padre}}
+  [ -d "$PROYECTOS/$p" ] && ancestros+=("$PROYECTOS/$p")
+  [ "$raiz_alcanzada" = si ] && break
+  resto="$padre"
+done
+
+n_sueltas=0
+sueltas=""
+if [ "${#ancestros[@]}" -gt 0 ]; then
+  # La ruta con la que se compara va sin barras invertidas. No es cosmética: al medir esto
+  # el 5-sep, un filtro con barras invertidas llegó con la mitad comidas, no casó nada y
+  # devolvió una lista vacía -- que se lee IGUAL que un "no hay nada". El awk de abajo
+  # tampoco escribe ninguna: construye la comilla y la barra desde su código.
+  # Sustitución de bash, no 'tr': un proceso menos, por lo de arriba. 'pwd -W' ya devuelve
+  # barras normales, así que esto solo cubre el caso raro en que $RAIZ llegue con las otras.
+  raiz_cmp=${ruta_win//\\//}
+  ahora_e=$(date +%s)
+  # UN find Y UN awk PARA TODAS LAS CARPETAS, no uno por carpeta: en Git Bash sobre
+  # Windows lanzar un proceso cuesta más que lo que hace, y es la misma lección que ya
+  # tiene escrita la pasada 1. Medido aquí: el awk sobre los 53 MB de las dos carpetas
+  # tarda 0,5 s; lo que sobraba eran los procesos.
+  lista=$(find "${ancestros[@]}" -maxdepth 1 -name '*.jsonl' -newermt "-$DIAS days" 2>/dev/null)
+  if [ -n "$lista" ]; then
+    #
+    # El cotejo es contra la RUTA del repo y con frontera: detrás del nombre tiene que
+    # venir la comilla de cierre (el repo) o un separador (una subcarpeta suya). Sin la
+    # frontera, 'bitacora' se llevaría los turnos de 'bitacora-project' -- el mismo fallo
+    # de prefijo que se arregló arriba, reaparecido por otra puerta. Se aceptan las dos
+    # formas del cwd: escapado con barras dobles (Windows) y con '/' (Unix).
+    while IFS=$'\t' read -r aqui tot fin ruta; do
+      [ -n "$ruta" ] || continue
+      [ "$aqui" -ge "$UMBRAL_TURNOS" ] || continue
+      sid=${ruta##*/}; sid=${sid%.jsonl}
+      [ -n "$EXCLUIR" ] && [ "$sid" = "$EXCLUIR" ] && continue
+      # Una sesión recién tocada puede estar VIVA en otra ventana, igual que en la pasada 2.
+      if fin_e=$(date -d "$fin" +%s 2>/dev/null) && [ -n "$fin_e" ]; then
+        [ $(( ahora_e - fin_e )) -lt $(( RECIENTE_MIN * 60 )) ] && continue
+      fi
+      carpeta=${ruta%/*}; carpeta=${carpeta##*/}
+      n_sueltas=$((n_sueltas + 1))
+      sueltas="$sueltas  $sid | $aqui de $tot turnos aquí | ${fin%%T*} | $carpeta
+"
+    done <<EOF
+$(awk -v raiz="$raiz_cmp" '
+      BEGIN {
+        bs = sprintf("%c", 92); q = sprintf("%c", 34)
+        n = split(raiz, parte, "/")
+        esc = parte[1]
+        for (i = 2; i <= n; i++) esc = esc bs bs parte[i]
+        n1 = q "cwd" q ":" q raiz; l1 = length(n1)
+        n2 = q "cwd" q ":" q esc;  l2 = length(n2)
+      }
+      /"type":"assistant"/ {
+        tot[FILENAME]++
+        dentro = 0
+        if ((p = index($0, n1)) > 0) { c = substr($0, p + l1, 1); if (c == q || c == "/") dentro = 1 }
+        if (!dentro && (p = index($0, n2)) > 0) { c = substr($0, p + l2, 1); if (c == q || c == bs) dentro = 1 }
+        if (dentro) aqui[FILENAME]++
+      }
+      {
+        if (match($0, /"timestamp":"[^"]*"/)) {
+          ts = substr($0, RSTART + 13, RLENGTH - 14)
+          if (ts > mx[FILENAME]) mx[FILENAME] = ts
+        }
+      }
+      END { for (f in aqui) print aqui[f] "\t" tot[f] "\t" mx[f] "\t" f }
+    ' $lista 2>/dev/null)
+EOF
+  fi
+fi
+
+# SE IMPRIME TARDE, Y NO ES COSMÉTICA. El hook de arranque corre este script con
+# 'timeout 8', y medido el 5-sep-2026 el auditor tarda más que eso en 5 de los 9 repos
+# grandes (lizar-informes, 36 s). Cuando lo mata, lo ya escrito en stdout SÍ ha salido y
+# el hook lo trata como una auditoría entera. O sea que el orden de impresión decide qué
+# sobrevive: la deuda (accionable, y con borrador detrás) tiene que ir por delante de
+# esto, que es informativo. Puesto arriba, lo desplazaba.
+decir_sueltas() {
+  [ "${n_sueltas:-0}" -gt 0 ] || return 0
+  echo "NO-SE-PUDO-COMPROBAR (sesiones de fuera): $n_sueltas sesión(es) trabajaron en este repo sin pertenecerle solo a él."
+  printf '%s' "$sueltas"
+  echo "  Se abrieron por encima del repo (la raíz del disco, o el home) y recorrieron"
+  echo "  varios, así que su entrada puede estar en cualquiera de ellos, o en ninguno."
+  echo "  NO se cuentan como deuda: la prueba de este auditor es 'hay un commit que toca"
+  echo "  ESTA bitácora', y eso no distingue 'anotó donde tocaba' de 'no anotó'. Míralas"
+  echo "  tú si reconoces alguna."
+}
+
 if [ "${#dirs[@]}" -eq 0 ]; then
+  # Aquí sí va primero: no hay deuda que pueda desplazar, y sin esto el repo cuyas únicas
+  # sesiones se abrieron por encima de él saldría como "no sé mirarlo" a secas, cuando
+  # resulta que sí se ha visto algo y se puede decir qué.
+  decir_sueltas
   echo "NO-SE-PUDO-COMPROBAR: no encuentro transcripts para $RAIZ"
   echo "  (buscaba $PROYECTOS/$patron y sus '--claude-worktrees-*')."
   echo "  No es lo mismo que 'no hay sesiones sin anotar': es que no sé mirarlo."
@@ -231,6 +392,7 @@ for d in "${dirs[@]}"; do
 done
 
 if [ ! -s "$TMP" ]; then
+  decir_sueltas
   echo "Sin sesiones que juzgar en los últimos $DIAS días para $RAIZ."
   exit 0
 fi
@@ -322,9 +484,11 @@ while IFS=$'\t' read -r ini_epoch fin_epoch turnos sid f; do
   fi
 done < "$TMP"
 
+decir_sueltas
+
 echo
 echo "--- resumen: $RAIZ ---"
-echo "anotadas=$n_anotadas  SIN-ANOTAR=$n_deuda  continuadas=$n_cadena  no-comprobables=$n_dudosas  (descartadas: $n_cortas cortas, $n_curso en curso)"
+echo "anotadas=$n_anotadas  SIN-ANOTAR=$n_deuda  continuadas=$n_cadena  no-comprobables=$n_dudosas  de-fuera=$n_sueltas  (descartadas: $n_cortas cortas, $n_curso en curso)"
 echo "ventana ${VENTANA_H}h | suelo ${UMBRAL_TURNOS} turnos | gracia de cadena ${GRACIA_MIN} min | ${DIAS} días"
 
 if [ "$n_deuda" -gt 0 ]; then

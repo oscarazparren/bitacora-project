@@ -268,6 +268,38 @@ else
     # aquí a propósito -- si las dos ventanas discreparan, una pieza contaría deuda que
     # la otra no y el humano no sabría cuál creer.
     salida=$(BITACORA_CONF="$CONF" "$AUDITOR" "$repo" 2>/dev/null)
+
+    # SESIONES QUE NO SON DE UN SOLO REPO. Desde el 5-sep-2026 el auditor las declara en
+    # vez de callarlas: sesiones abiertas por encima del repo (la raíz del disco, o el
+    # home) que trabajaron aquí y en otros sitios. NO son deuda -- el auditor no puede
+    # saber en cuál de los repos que tocaron dejó su entrada -- así que salen por
+    # 'dudoso' y no por 'propuesta'.
+    #
+    # Y NO PUEDEN IR POR EL CAMINO DE LOS PENDIENTES, aunque quisieran: 'duena_de' no
+    # reconoce la carpeta 'C--' (ningún repo tiene ese patrón), devolvería vacío y el
+    # filtro de más abajo las tiraría EN SILENCIO. Ese es el fallo que el caso 16 del
+    # banco vigila: que el auditor diga algo nuevo y aquí nadie lo oiga.
+    # El bloque son la cabecera y las líneas SANGRADAS que la siguen. No se corta por
+    # línea en blanco: el auditor no deja ninguna ahí, y el rango habría seguido tragando
+    # hasta el resumen -- metiendo las sesiones ANOTADAS de este repo dentro de un aviso
+    # que dice justo lo contrario.
+    fuera=$(printf '%s\n' "$salida" | awk '
+      /^NO-SE-PUDO-COMPROBAR \(sesiones de fuera\)/ { dentro = 1; print; next }
+      dentro && /^  / { print; next }
+      dentro { exit }
+    ')
+    if [ -n "$fuera" ]; then
+      dudoso "\`$nombre\`: hay sesiones que trabajaron aquí sin pertenecerle solo a él, y
+no se pueden juzgar contra una sola bitácora.
+
+\`\`\`
+$fuera
+\`\`\`
+
+Son las que incumplen \"un chat por repo\" del CLAUDE.md. Mirarlas es cosa de un humano:
+si alguna dejó decisiones que importan, van a la bitácora del repo donde importen."
+    fi
+
     pendientes=$(printf '%s\n' "$salida" | sed -n '/^PENDIENTES DE ANOTAR:/,$p' | sed '1d' | sed '/^[[:space:]]*$/d')
     [ -n "$pendientes" ] || continue
 

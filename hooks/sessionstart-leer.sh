@@ -810,10 +810,26 @@ fi
 # "¿esta sesión anotó?" sin un bucle a mano.
 #
 # El auditor NO TOCA NINGÚN REPO: solo lee. Y aunque es LOCAL (git log + find + awk,
-# cero red), cuesta ~3,8 s medidos, así que va DENTRO del presupuesto de esta
-# cabecera: si no queda tiempo se dice con saltado() y no se corre. Meter 3,8 s a
-# ciegas en un hook con plazo duro de 45 s es literalmente cómo murió el hook el
-# 28-ago (cuarto fallo silencioso).
+# cero red), CUESTA, así que va DENTRO del presupuesto de esta cabecera: si no queda
+# tiempo se dice con saltado() y no se corre. Meterlo a ciegas en un hook con plazo
+# duro de 45 s es literalmente cómo murió el hook el 28-ago (cuarto fallo silencioso).
+#
+# YA NO CABE, Y HAY QUE DECIDIR QUÉ HACER. Aquí ponía "~3,8 s medidos"; ese número está
+# caducado. Medido el 5-sep-2026 en los 9 repos grandes de esta máquina, el auditor pasa
+# de los 8 s del 'timeout' en CINCO (lizar-informes 36 s, lizar-correo 14,7, lizar-flota
+# 14,5, kangurea-web 14,4, bitacora-project 8,7).
+#
+# Y el modo de fallo es el malo: cuando 'timeout' lo mata, lo ya escrito en stdout SÍ ha
+# salido, así que $AUD queda PARCIAL PERO NO VACÍA y esto de abajo la trata como una
+# auditoría entera. Medido: lizar-flota, kangurea-web y lizar-informes tienen 2
+# SIN-ANOTAR cada uno en la ejecución completa y CERO en la de 8 s. Seis deudas reales
+# que el arranque no enseña, sin decir que no las ha mirado. Cuando la salida sale del
+# todo vacía sí se dice (saltado, más abajo); cuando sale truncada, no.
+#
+# NO SE PARCHEA AQUÍ a propósito: acelerar el auditor, subir el presupuesto o detectar el
+# truncamiento son tres decisiones distintas y ninguna es obvia. Queda escrito para que se
+# decida, no para que se olvide. Ver la entrada del 5-sep-2026 en la BITACORA.md del
+# proyecto, sección 6.
 #
 # Se excluye la sesión actual ($SESION_ID): sigue viva y todavía puede anotar. El
 # auditor además la descartaría por reciente, pero pasarlo explícito no cuesta nada.
@@ -838,6 +854,27 @@ if [ -n "$RAIZ" ] && [ -n "$MOSTRAR" ] && [ -f "$F" ]; then
       if [ -z "$AUD" ]; then
         saltado "auditoría de sesiones sin anotar: no terminó dentro del presupuesto"
       else
+        # SESIONES QUE NO SON DE UN SOLO REPO. Desde el 5-sep-2026 el auditor también
+        # declara las sesiones abiertas por encima del repo (la raíz del disco, o el home)
+        # que trabajaron aquí y en otros sitios. NO son deuda y no llevan borrador: el
+        # auditor no puede saber en cuál de los repos que tocaron quedó su entrada. Si
+        # aquí no se recogieran, el auditor las diría y nadie las oiría -- este filtro
+        # solo miraba '^SIN-ANOTAR '. Lo vigila el caso 16 del banco de atribución.
+        FUERA=$(printf '%s\n' "$AUD" | awk '
+          /^NO-SE-PUDO-COMPROBAR \(sesiones de fuera\)/ { dentro = 1; print; next }
+          dentro && /^  / { print; next }
+          dentro { exit }
+        ')
+        if [ -n "$FUERA" ]; then
+          SALIDA="${SALIDA}=== SESIONES QUE TRABAJARON AQUÍ SIN SER SOLO DE ESTE REPO ===
+$(printf '%s' "$FUERA" | sanear_delimitadores)
+
+No cuentan como deuda y no hay borrador: no se sabe a qué bitácora pertenecen. Son
+las que incumplen \"un chat por repo\" del CLAUDE.md.
+
+"
+        fi
+
         DEUDA=$(printf '%s\n' "$AUD" | grep '^SIN-ANOTAR ' || true)
         if [ -n "$DEUDA" ]; then
           N_DEUDA=$(printf '%s\n' "$DEUDA" | grep -c '^SIN-ANOTAR ' || true)

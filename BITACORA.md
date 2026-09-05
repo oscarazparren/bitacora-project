@@ -11,6 +11,117 @@ Formato: `## AAAA-MM-DD — [dispositivo] titular`
 
 ---
 
+## 2026-09-05 — [PC viejo] Las sesiones que no son de un solo repo se DECLARAN, no se reparten. Y midiendo el coste apareció algo peor: el auditor no cabe en el presupuesto del hook
+
+Cierra el "LO GORDO" de la entrada de abajo: qué hace el auditor con las 7 sesiones de
+`C--` y `C--Users-Oscar` que trabajaron dentro de repos con bitácora y eran invisibles.
+
+### 1. La decisión: el tercer estado, y no por gusto
+
+**Se declaran, no se reparten.** La razón de peso no es estética: **el auditor no puede
+saber**. Su prueba de ANOTADA es *"hay un commit que toca ESTA bitácora en la ventana"*, y
+eso **no distingue "anotó donde tocaba" de "no anotó"**. Una sesión que recorrió seis
+repos y dejó UNA entrada correcta saldría ANOTADA en uno y SIN-ANOTAR en los otros cinco:
+deuda falsa a razón de cinco por sesión. La deuda falsa se deja de leer, y a partir de ahí
+la deuda de verdad también es silenciosa — el fallo de siempre, alcanzado por el lado
+ruidoso. *"No lo sé"* es aquí la respuesta **verdadera**, no la cómoda.
+
+### 2. Lo que midió el reparto, antes de descartarlo
+
+Medí turnos por `cwd` dentro de cada sesión, y el reparto se cae solo: **en las 7, la
+mayoría de los turnos no está en ningún repo** (268 de 328, 88 de 264, 99 de 194, 49 de
+59, 64 de 77). Son sesiones abiertas en la raíz o en el home que pasan por los repos.
+
+Y las colas por repo son minúsculas: la sesión de 230 turnos pisó `lizar-asistente-aula`
+**un turno** y `AlcoholTax-IA` **dos**. Repartir cobraría seis entradas por eso.
+
+Sumado a que son, por construcción, las que incumplen «un chat por repo» del `CLAUDE.md`:
+el remedio de una sesión que tocó seis repos no son seis entradas, es no haberla tenido
+así. Un auditor que exigiera las seis convertiría el incumplimiento en rutina.
+
+### 3. Dónde busca, y el truco que evita un cuarto sitio con la transformación
+
+En las **carpetas ANCESTRO**: las de los directorios que contienen al repo (`C--`,
+`C--Users-Oscar`, `C--Users-Oscar-repos`). Prueba léxica sobre la misma ruta; no necesita
+la lista de repos de la máquina y da igual respuesta en las dos.
+
+**El patrón del ancestro no se calcula: se recorta.** La transformación cambia un carácter
+por otro, o sea que **conserva la longitud**, así que el patrón de un directorio que
+contiene a éste es el prefijo de `$patron` con tantos caracteres como su ruta
+(`C:/Users/Oscar/repos` son 20 → `C--Users-Oscar-repos`; `C:/` son 3 → `C--`). No es un
+atajo: es que aquí **no hay una segunda traducción que pueda separarse** de la primera. El
+caso 11 vigila que tres sitios no diverjan; éste lo evita por construcción.
+
+El umbral para nombrarlas es el `UMBRAL_TURNOS` que ya existía. Su significado —«por
+debajo de esto no hay nada que anotar»— es exactamente la pregunta, y ya está calibrado.
+
+### 4. Los tres sitios, otra vez, pero un piso más arriba
+
+El caso 11 comprueba que los tres calculen igual **el patrón**. Faltaba lo de encima: el
+auditor puede **decir algo nuevo** y los dos que le leen seguir sin enterarse — el hook
+filtraba por `^SIN-ANOTAR ` y el sueño por el bloque PENDIENTES. Dicho y no oído es peor
+que no dicho, porque parece cubierto. **Caso 16**, visto fallar, que exige el marcador en
+los tres.
+
+En el sueño hay además una trampa concreta: estas sesiones **no pueden ir por PENDIENTES**
+aunque quisieran, porque `duena_de` no reconoce la carpeta `C--` y las tiraría **en
+silencio**. Salen por `dudoso`.
+
+### 5. Se imprime TARDE, y eso resultó no ser cosmética
+
+El hook corre el auditor con `timeout 8`. Puesto arriba, el bloque nuevo **desplazaba a la
+deuda** cuando el auditor no termina. Va al final, con la deuda por delante.
+
+### 6. LO QUE APARECIÓ AL MEDIR EL COSTE, y no se arregla aquí
+
+**El auditor no cabe en el presupuesto del hook, y lleva tiempo sin caber.** Medido hoy en
+los 9 repos grandes: pasa de 8 s en **5 de ellos** (`lizar-informes` **36 s**,
+`lizar-correo` 14,7, `lizar-flota` 14,5, `kangurea-web` 14,4, `bitacora-project` 8,7). La
+cabecera del propio auditor dice «~3,8 s medidos»: **ese número está caducado**.
+
+La consecuencia es la mala. Con `timeout 8` la salida sale **parcial pero no vacía**, y el
+hook la trata como una auditoría entera:
+
+| repo | SIN-ANOTAR completo | con `timeout 8` |
+|---|---|---|
+| `lizar-flota` | 2 | **0** |
+| `kangurea-web` | 2 | **0** |
+| `lizar-informes` | 2 | **0** |
+
+Seis deudas reales que el arranque no enseña. A veces la salida sale vacía y entonces el
+hook dice `saltado` (visible y correcto); a veces sale truncada y **calla**. Es la forma
+exacta del fallo que persigue este repo, en la pieza que viene a impedirlo. **Necesita su
+sesión**: no es un parche, es decidir si se acelera el auditor, se sube el presupuesto o
+se detecta el truncamiento.
+
+De paso, un dato de campo útil: en Git Bash de esta máquina **un `printf | sed` dentro de
+`$(...)` cuesta ~610 ms**. La primera versión del bucle de ancestros hacía ocho: 5,5 s
+ella sola. Por eso el recorte de la sección 3.
+
+### 7. Y lo otro que queda vivo: pasa también en carpetas normales
+
+Buscando si el agujero se limitaba a las carpetas ancestro, encontré que **no**: una sesión
+de 142 turnos de `lizar-flota` pasó **29 turnos en `bitacora-flota`**. Está siendo juzgada
+—contra `lizar-flota`— y esos 29 turnos son invisibles para `bitacora-flota`. Cubrirlo
+obliga a leer los transcripts de las 24 carpetas en cada arranque, que es justo lo que la
+sección 6 dice que no cabe. Queda **dicho, no fingido**.
+
+### Comprobado
+
+- Banco de atribución: **37 ok** (6 nuevos, los seis vistos fallar antes). Banco de la
+  `1d`: **23 ok**. Sintaxis de los cuatro ficheros.
+- **19 repos con bitácora, antes y después: 0 veredictos distintos**; 5 ganan el bloque
+  nuevo (`bitacora-flota`, `bitacora-project`, `kangurea-web`, `lizar-flota`,
+  `lizar-panel`).
+- Coste añadido al auditor: **+1,2 s** (9,7 → 10,9 en este repo), tras quitar los ocho
+  subprocesos.
+- **Hook de verdad, extremo a extremo** en `bitacora-flota`: inyecta la sección con sus 3
+  sesiones (51, 13 y 20 turnos), repartidas entre `C--` y `C--Users-Oscar`.
+- El `cwd` se extrajo **sin barras invertidas en el filtro**, como avisaba la entrada de
+  abajo. Y se confirmó por qué: la capa de la herramienta se come el `\\` **incluso dentro
+  de un heredoc entre comillas** — verificado con `od`. El `awk` que decide construye la
+  comilla y la barra con `sprintf("%c", ...)`: no hay ninguna que comerse.
+
 ## 2026-09-05 — [PC viejo] Los transcripts llevan dentro el `cwd`: la transformación de rutas deja de adivinarse, y la premisa de la tarea era falsa
 
 Continúa la entrada de aquí abajo. Iba a ser un `sed` de un carácter y ha salido otra

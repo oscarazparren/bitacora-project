@@ -67,6 +67,16 @@ cat > "$TMP/runner.sh" <<'RUNNER'
 set -uo pipefail
 # shellcheck disable=SC1090
 . "$BLOQUE_FILE"
+# El auditor de verdad no imprime aquí las "sesiones de fuera": las calcula y las dice
+# MÁS TARDE, para que bajo un 'timeout' sobreviva antes la deuda. El banco las provoca
+# llamando a la misma función que llama él, que es lo que hay que probar.
+declare -F decir_sueltas >/dev/null 2>&1 && decir_sueltas
+# Los ANCESTROS van antes que los DIRS a propósito: 'aceptadas' se queda con todo lo
+# que viene DESPUÉS de ###DIRS###, así que el marcador de dirs tiene que ser el último.
+printf '###ANCESTROS###\n'
+if declare -p ancestros 2>/dev/null | grep -q 'declare -a'; then
+  [ "${#ancestros[@]}" -gt 0 ] && for d in "${ancestros[@]}"; do printf '%s\n' "${d##*/}"; done
+fi
 printf '###DIRS###\n'
 if declare -p dirs 2>/dev/null | grep -q 'declare -a'; then
   [ "${#dirs[@]}" -gt 0 ] && for d in "${dirs[@]}"; do printf '%s\n' "${d##*/}"; done
@@ -92,8 +102,27 @@ RUNNER
 #
 # Se usa SOLO para construir el fixture, nunca para decidir.
 patron_de() {  # patron_de <dir> -> nombre de carpeta de proyecto
-  local rw; rw=$(cd "$1" && pwd -W 2>/dev/null || printf '%s' "$1")
-  printf '%s' "$rw" | sed 's#[:/\\ .]#-#g'
+  printf '%s' "$(win_de "$1")" | sed 's#[:/\\ .]#-#g'
+}
+win_de() {     # win_de <dir> -> la ruta tal y como la ve Windows ('C:/Users/...')
+  (cd "$1" && pwd -W 2>/dev/null) || printf '%s' "$1"
+}
+
+# La barra invertida NO se escribe literal en este fichero, y no es manía: se construye
+# desde su código. Al medir esto el 5-sep-2026, un filtro con barras invertidas llegó
+# a la herramienta con la mitad comidas, no casó nada y devolvió una lista vacía que se
+# lee EXACTAMENTE igual que un "no hay nada". Es la forma del fallo que persigue este
+# repo, cometido con la herramienta de medir. Aquí no puede repetirse porque no hay
+# ninguna que comerse.
+BS=$(awk 'BEGIN{printf "%c", 92}')
+
+cwd_escapado() {  # 'C:/a/b' -> 'C:\\a\\b', que es como el JSON del transcript lo guarda
+  local resto="$1" out="" pieza
+  while case "$resto" in */*) : ;; *) false ;; esac; do
+    pieza=${resto%%/*}; resto=${resto#*/}
+    out="$out$pieza$BS$BS"
+  done
+  printf '%s%s' "$out" "$resto"
 }
 
 PROY="$TMP/proyectos"
@@ -107,8 +136,32 @@ carpeta() {  # carpeta <ruta-repo> [sufijo] -> crea la carpeta de proyecto
   mkdir -p "$PROY/$(patron_de "$1")${2:-}"
 }
 
+# transcript <carpeta> <sid> <turnos> <turnos-aquí> <ruta-repo> [escapado]
+# Un .jsonl de mentira con la forma que importa: 'type' y 'cwd' en cada apunte de
+# asistente. Con 'escapado' escribe el cwd con barras invertidas dobles, que es como lo
+# guarda el JSON de verdad; sin él, con '/', que es como lo guardaría un Linux. Las dos
+# formas tienen que casar, así que se prueban las dos.
+transcript() {
+  local dir="$PROY/$1" sid="$2" tot="$3" aqui="$4" repo="$5" esc="${6:-}" i c f dentro fuera
+  mkdir -p "$dir"; f="$dir/$sid.jsonl"; : > "$f"
+  dentro=$(win_de "$repo"); fuera="C:/"
+  if [ -n "$esc" ]; then dentro=$(cwd_escapado "$dentro"); fuera=$(cwd_escapado "C:/"); fi
+  i=1
+  while [ "$i" -le "$tot" ]; do
+    if [ "$i" -le "$aqui" ]; then c="$dentro"; else c="$fuera"; fi
+    printf '{"type":"assistant","cwd":"%s","timestamp":"2026-09-01T10:0%s:00.000Z"}\n' \
+      "$c" "$((i % 10))" >> "$f"
+    i=$((i + 1))
+  done
+}
+
+# Las variables que el bloque necesita se pasan explícitas y con los valores por defecto
+# del auditor: si el bloque empieza a usar una que no esté aquí, 'set -u' lo tumba y se
+# ve, en vez de leer una cadena vacía y decidir con ella.
 correr() {   # correr <ruta-repo> -> salida cruda del bloque
-  RAIZ="$1" PROYECTOS="$PROY" BLOQUE_FILE="$TMP/bloque.sh" bash "$TMP/runner.sh" 2>/dev/null
+  RAIZ="$1" PROYECTOS="$PROY" BLOQUE_FILE="$TMP/bloque.sh" \
+  DIAS=14 UMBRAL_TURNOS=10 RECIENTE_MIN=30 EXCLUIR="" \
+    bash "$TMP/runner.sh" 2>/dev/null
 }
 
 PASA=0; FALLA=0
@@ -125,8 +178,31 @@ aceptadas() {
   esac
 }
 
-# Lo que el bloque dijo por su cuenta, antes del marcador.
-dicho_de() { printf '%s' "${1%%###DIRS###*}"; }
+# Lo que el bloque dijo por su cuenta, antes del primer marcador.
+dicho_de() { printf '%s' "${1%%###ANCESTROS###*}"; }
+
+# Las carpetas ANCESTRO que encontró: las de los directorios que CONTIENEN al repo.
+ancestros_de() {
+  case "$1" in
+    *'###ANCESTROS###'*) printf '%s\n' "${1#*###ANCESTROS###}" \
+                           | sed -n '1,/###DIRS###/p' | sed '/###DIRS###/d;/^$/d' | sort ;;
+    *) : ;;
+  esac
+}
+
+espera_ancestros() {  # <nombre> <salida> <nombres-esperados...>
+  local nombre="$1" salida="$2"; shift 2
+  local queria obtenido
+  queria=$(printf '%s\n' "$@" | sed '/^$/d' | sort)
+  obtenido=$(ancestros_de "$salida")
+  if [ "$queria" = "$obtenido" ]; then
+    printf '  ok    %s\n' "$nombre"; PASA=$((PASA + 1))
+  else
+    printf '  FALLA %s\n        esperaba: %s\n        obtuvo:   %s\n' \
+      "$nombre" "$(resumen_de "$queria")" "$(resumen_de "$obtenido")"
+    FALLA=$((FALLA + 1))
+  fi
+}
 
 espera_dirs() {  # <nombre> <salida> <sufijos-esperados> <ruta-repo>   ('=' = la exacta)
   local nombre="$1" salida="$2" esperados="$3" raiz="$4" base obtenido queria s
@@ -299,6 +375,107 @@ else
   printf '  FALLA %s\n        se han separado, hay %s versiones:\n%s\n' \
     "11 los 3 sitios usan la MISMA transformación" "$n_distintos" \
     "$(printf '%s\n' "$patrones_hallados" | sed 's/^/          /')"
+  FALLA=$((FALLA + 1))
+fi
+
+# =========================================================================
+# LAS SESIONES QUE NO PERTENECEN A UN SOLO REPO
+# =========================================================================
+# Medido el 5-sep-2026 en el PC viejo: las carpetas 'C--' y 'C--Users-Oscar' -- sesiones
+# abiertas en 'C:\' o en el home -- guardan 7 sesiones que trabajaron dentro de repos con
+# bitácora, y eran INVISIBLES para el auditor y para el sueño. El nombre de su carpeta es
+# correcto, así que ningún arreglo de la transformación las alcanza.
+#
+# SE DECLARAN, NO SE REPARTEN, y la razón es que el auditor NO PUEDE saber. Su prueba de
+# "anotada" es "hay un commit que toca ESTA bitácora en la ventana", y eso no distingue
+# "anotó donde tocaba" de "no anotó": una sesión que tocó seis repos y dejó UNA entrada
+# correcta saldría ANOTADA en uno y SIN-ANOTAR en cinco. Eso es deuda falsa por sesión, y
+# la deuda falsa se deja de leer -- momento en el cual la deuda de verdad también es
+# silenciosa. Es el fallo de siempre, alcanzado por el lado ruidoso.
+#
+# Y los números lo rematan: en las 7, la MAYORÍA de los turnos no está en ningún repo
+# (268 de 328, 88 de 264, 99 de 194, 49 de 59). Las colas por repo son minúsculas -- la
+# sesión de 230 turnos tocó 'lizar-asistente-aula' UN turno y 'AlcoholTax-IA' dos.
+# Repartir cobraría a seis bitácoras una entrada por eso.
+#
+# El umbral que decide si se NOMBRA es el UMBRAL_TURNOS que ya existe, no uno nuevo: su
+# significado ("por debajo de esto no hay nada que anotar") es exactamente el que hace
+# falta aquí, y ya está calibrado.
+R_ANC=$(repo con-ancestro)
+carpeta "$R_ANC"
+CARPETA_ANC=$(patron_de "$REPOS")   # la carpeta de proyecto del directorio que los contiene
+carpeta "$REPOS"
+
+espera_ancestros "12a ve la carpeta del directorio que lo contiene" \
+  "$(correr "$R_ANC")" "$CARPETA_ANC"
+
+# Un repo sin ninguna carpeta ancestro en disco no inventa ninguna. Vive en otro árbol a
+# propósito: bajo "$REPOS" la carpeta ancestro ya existe, así que probarlo ahí no probaría
+# nada. Y se comprueba, porque el bucle sube hasta la raíz del disco y ahí es donde una
+# comprobación floja convertiría a 'C--' en ancestro de todo.
+mkdir -p "$TMP/aparte/aislado"
+espera_ancestros "12b sin carpetas ancestro -> ninguna" "$(correr "$TMP/aparte/aislado")" ""
+
+# Sesión de la carpeta ancestro que trabajó AQUÍ por encima del umbral: se nombra.
+transcript "$CARPETA_ANC" "aaaa1111-de-fuera" 40 12 "$R_ANC" escapado
+O12=$(correr "$R_ANC")
+espera "13a la sesión de fuera se declara" "NO-SE-PUDO-COMPROBAR (sesiones de fuera)" "$(dicho_de "$O12")"
+espera "13b y se la nombra"                "aaaa1111-de-fuera"     "$(dicho_de "$O12")"
+espera "13c con cuántos turnos fueron aquí" "12 de 40"             "$(dicho_de "$O12")"
+
+# NO es deuda. Meterla en SIN-ANOTAR o en PENDIENTES sería colapsar "no lo sé" con "no
+# hay nada", que es justo lo que la cabecera del auditor prohíbe -- y además el sueño la
+# pasaría por su filtro de dueño, que no reconoce estas carpetas y la tiraría en silencio.
+espera_no "13d no se cuenta como deuda"    "SIN-ANOTAR"  "$(dicho_de "$O12")"
+espera_no "13e ni entra en PENDIENTES"     "PENDIENTES"  "$(dicho_de "$O12")"
+
+# Y no se lleva por delante lo que sí es suyo.
+espera_dirs "13f la carpeta propia sigue aceptándose" "$O12" "=" "$R_ANC"
+
+# El cwd con '/' (un Linux) tiene que casar igual que el escapado de Windows.
+transcript "$CARPETA_ANC" "bbbb2222-con-barras" 30 15 "$R_ANC"
+espera "14 el cwd con '/' casa igual que el escapado" "bbbb2222-con-barras" \
+  "$(dicho_de "$(correr "$R_ANC")")"
+
+# Por debajo del umbral no se nombra: el auditor corre en CADA arranque y una nota que
+# sale siempre deja de leerse. Un turno de paso no es trabajo que deba anotarse.
+transcript "$CARPETA_ANC" "cccc3333-de-paso" 40 3 "$R_ANC"
+espera_no "15a un roce por debajo del umbral no se nombra" "cccc3333-de-paso" \
+  "$(dicho_de "$(correr "$R_ANC")")"
+
+# Una sesión de la carpeta ancestro que nunca pisó este repo no es asunto suyo.
+transcript "$CARPETA_ANC" "dddd4444-ajena" 50 0 "$R_ANC"
+espera_no "15b una sesión que no pisó el repo no se nombra" "dddd4444-ajena" \
+  "$(dicho_de "$(correr "$R_ANC")")"
+
+# Y un repo hermano no hereda las sesiones del otro por estar bajo el mismo ancestro:
+# el cotejo es contra la ruta del repo, no contra la carpeta.
+espera_no "15c el hermano no hereda esas sesiones" "aaaa1111-de-fuera" \
+  "$(dicho_de "$(correr "$R_KW")")"
+
+# =========================================================================
+# LOS TRES SITIOS QUE CONSUMEN LA SALIDA DEL AUDITOR
+# =========================================================================
+# Mismo argumento que el caso 11, un piso más arriba: el auditor puede decir algo nuevo y
+# los dos que le leen seguir sin enterarse. El hook de arranque filtra por '^SIN-ANOTAR '
+# y el sueño por el bloque PENDIENTES; si ninguno conoce este marcador, el auditor lo dice
+# y NADIE lo oye -- que es peor que no decirlo, porque parece cubierto.
+# El marcador es específico y no el 'NO-SE-PUDO-COMPROBAR:' a secas: esa cadena ya la usa
+# el auditor para otra cosa distinta ("no encuentro transcripts"), y un consumidor que
+# filtrara por ella confundiría dos avisos que piden mirar sitios distintos.
+MARCA='NO-SE-PUDO-COMPROBAR (sesiones de fuera)'
+faltan=""
+for pieza in scripts/auditar-sesiones.sh scripts/sueno.sh hooks/sessionstart-leer.sh; do
+  # Se quitan las barras invertidas antes de comparar: quien lo emite lo escribe tal cual,
+  # y quien lo lee tiene que escapar los paréntesis para su regex. Son la misma cadena y
+  # tienen que contar como tal, o el banco obligaría a una de las dos a estar mal.
+  tr -d '\134' < "$RAIZ_REPO/$pieza" 2>/dev/null | grep -qF -- "$MARCA" || faltan="$faltan $pieza"
+done
+if [ -z "$faltan" ]; then
+  printf '  ok    %s\n' "16 los 3 que leen al auditor conocen el marcador nuevo"; PASA=$((PASA + 1))
+else
+  printf '  FALLA %s\n        no lo conocen:%s\n' \
+    "16 los 3 que leen al auditor conocen el marcador nuevo" "$faltan"
   FALLA=$((FALLA + 1))
 fi
 
