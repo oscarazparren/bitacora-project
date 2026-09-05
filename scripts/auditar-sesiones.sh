@@ -78,6 +78,31 @@ if [ ! -f "$BITACORA" ]; then
   exit 0
 fi
 
+# ---------- Lo que este script le pide a awk, comprobado y no supuesto ----------
+# Desde el 5-sep-2026 las fechas se convierten DENTRO de awk en vez de llamando a 'date'
+# una vez por sesión. Eso es lo que hace que este script quepa en el 'timeout 8' del hook
+# de arranque (ver la cabecera de la pasada 1), pero mete una dependencia nueva: mktime()
+# y strftime(), que son de gawk, y el FLAG UTC de mktime, que es de gawk 4.2 en adelante.
+#
+# SE COMPRUEBA PORQUE LOS DOS MODOS DE FALLO SON MUDOS. Un awk sin mktime aborta el
+# programa entero, así que la pasada 1 devolvería CERO líneas -- y ahí abajo eso se lee
+# exactamente igual que "no hay sesiones que juzgar". Y un awk que aceptara el flag y lo
+# IGNORARA daría epochs corridos las horas del huso (dos en esta máquina), lo bastante
+# para sacar de la ventana de 14 días sesiones que están dentro. Ninguno de los dos se
+# vería: son la forma de fallo que persigue este repo.
+#
+# Por eso la prueba compara contra un número CONCRETO y no se conforma con que la función
+# exista: 2026-01-02T03:04:05Z son 1767323045 segundos, y un awk que interprete esa fecha
+# en hora local da otro. Cuesta un proceso (~80 ms) UNA vez, no uno por sesión, y cambia
+# un fallo mudo por el tercer estado.
+if ! awk 'BEGIN { exit !(mktime("2026 01 02 03 04 05", 1) == 1767323045 && strftime("%Y", 0, 1) == "1970") }' 2>/dev/null; then
+  echo "NO-SE-PUDO-COMPROBAR: el 'awk' de esta máquina no convierte fechas como hace falta."
+  echo "  Hacen falta mktime() y strftime() con el flag UTC (gawk 4.2 o posterior)."
+  echo "  Sin eso las fechas saldrían corridas y la deuda se calcularía mal EN SILENCIO."
+  echo "  Prefiero no decir nada a decir algo falso: esto no es 'no hay deuda'."
+  exit 0
+fi
+
 # ---------- Localizar los transcripts de este repo ----------
 # Claude Code nombra la carpeta de proyecto transformando la ruta: 'C:\Users\Oscar\repos\x'
 # -> 'C--Users-Oscar-repos-x'.
@@ -253,21 +278,31 @@ if [ "${#ancestros[@]}" -gt 0 ]; then
     # frontera, 'bitacora' se llevaría los turnos de 'bitacora-project' -- el mismo fallo
     # de prefijo que se arregló arriba, reaparecido por otra puerta. Se aceptan las dos
     # formas del cwd: escapado con barras dobles (Windows) y con '/' (Unix).
-    while IFS=$'\t' read -r aqui tot fin ruta; do
+    # El epoch del cierre lo calcula el awk de abajo, no un 'date' por sesión: la
+    # conversión es la misma y aquí la línea ya está partida. Ver la pasada 1.
+    while IFS=$'\t' read -r aqui tot fin_e fecha ruta; do
       [ -n "$ruta" ] || continue
       [ "$aqui" -ge "$UMBRAL_TURNOS" ] || continue
       sid=${ruta##*/}; sid=${sid%.jsonl}
       [ -n "$EXCLUIR" ] && [ "$sid" = "$EXCLUIR" ] && continue
       # Una sesión recién tocada puede estar VIVA en otra ventana, igual que en la pasada 2.
-      if fin_e=$(date -d "$fin" +%s 2>/dev/null) && [ -n "$fin_e" ]; then
+      # El '-1' es "no supe convertir la fecha", y entonces NO se descarta: dejarla fuera
+      # por no saber fecharla sería callar una sesión por un fallo de la herramienta.
+      if [ "$fin_e" -gt 0 ] 2>/dev/null; then
         [ $(( ahora_e - fin_e )) -lt $(( RECIENTE_MIN * 60 )) ] && continue
       fi
       carpeta=${ruta%/*}; carpeta=${carpeta##*/}
       n_sueltas=$((n_sueltas + 1))
-      sueltas="$sueltas  $sid | $aqui de $tot turnos aquí | ${fin%%T*} | $carpeta
+      sueltas="$sueltas  $sid | $aqui de $tot turnos aquí | $fecha | $carpeta
 "
     done <<EOF
 $(awk -v raiz="$raiz_cmp" '
+      function epoch_de(ts,   d) {
+        if (length(ts) < 19) return -1
+        d = substr(ts,1,4) " " substr(ts,6,2) " " substr(ts,9,2) " " \
+            substr(ts,12,2) " " substr(ts,15,2) " " substr(ts,18,2)
+        return mktime(d, 1)
+      }
       BEGIN {
         bs = sprintf("%c", 92); q = sprintf("%c", 34)
         n = split(raiz, parte, "/")
@@ -289,18 +324,26 @@ $(awk -v raiz="$raiz_cmp" '
           if (ts > mx[FILENAME]) mx[FILENAME] = ts
         }
       }
-      END { for (f in aqui) print aqui[f] "\t" tot[f] "\t" mx[f] "\t" f }
+      END {
+        for (f in aqui)
+          print aqui[f] "\t" tot[f] "\t" epoch_de(mx[f]) "\t" substr(mx[f], 1, 10) "\t" f
+      }
     ' $lista 2>/dev/null)
 EOF
   fi
 fi
 
 # SE IMPRIME TARDE, Y NO ES COSMÉTICA. El hook de arranque corre este script con
-# 'timeout 8', y medido el 5-sep-2026 el auditor tarda más que eso en 5 de los 9 repos
-# grandes (lizar-informes, 36 s). Cuando lo mata, lo ya escrito en stdout SÍ ha salido y
-# el hook lo trata como una auditoría entera. O sea que el orden de impresión decide qué
-# sobrevive: la deuda (accionable, y con borrador detrás) tiene que ir por delante de
-# esto, que es informativo. Puesto arriba, lo desplazaba.
+# 'timeout 8'. Cuando lo mata, lo ya escrito en stdout SÍ ha salido y el hook lo trata
+# como una auditoría entera, así que el orden de impresión decide qué sobrevive: la deuda
+# (accionable, y con borrador detrás) tiene que ir por delante de esto, que es
+# informativo. Puesto arriba, lo desplazaba.
+#
+# El 5-sep-2026 esto no era una precaución sino el caso normal: el auditor pasaba de 8 s
+# en 5 de los 9 repos grandes. Ese mismo día se aceleró y quedaron todos entre 1,7 y 3,1 s
+# (ver la pasada 1), o sea que hoy el truncamiento es latente y no vivo. El orden se
+# mantiene por eso mismo: latente no es imposible, y este es el único sitio donde decidir
+# qué se pierde primero cuesta cero.
 decir_sueltas() {
   [ "${n_sueltas:-0}" -gt 0 ] || return 0
   echo "NO-SE-PUDO-COMPROBAR (sesiones de fuera): $n_sueltas sesión(es) trabajaron en este repo sin pertenecerle solo a él."
@@ -344,6 +387,28 @@ trap 'rm -f "$TMP" "$TMP.crudo"' EXIT
 # come 10-20, y su plazo duro son 45. Meter ahí 9,7 s habría reconstruido LITERALMENTE la
 # avería del 28-ago —el cuarto fallo silencioso, el hook que moría por timeout— desde la
 # pieza que viene a impedirla.
+#
+# NI UN PROCESO POR SESIÓN, y de ahí sale el resto. Hasta el 5-sep-2026 esa lección estaba
+# aplicada a los FICHEROS y no a las SESIONES, y por eso volvió a pasar exactamente lo
+# mismo un piso más arriba: el auditor llamaba a 'date' dos veces aquí y tres en la pasada
+# 2, más un 'git log | wc -l' por sesión. Perfilado ese día en bitacora-project (11,3 s en
+# total): pasada 1 = 3,67 s, pasada 2 = 5,85 s, todo lo demás 1,7 s. Con 'date -d' a 90 ms
+# y 'git log | wc -l' a 219, son ~0,7 s por sesión, o sea ~10 s de los 11,3 en fechas. El
+# trabajo de verdad —el awk sobre los 53 MB de las carpetas ancestro— tarda 0,42 s.
+#
+# La consecuencia era el fallo de siempre: con 'timeout 8' el hook mataba el script a
+# medias, lo ya escrito en stdout SÍ había salido, y el hook trataba una auditoría PARCIAL
+# como entera. Medido: lizar-flota, kangurea-web y lizar-informes tenían 2 SIN-ANOTAR cada
+# uno en la ejecución completa y CERO en la de 8 s. Seis deudas reales invisibles, sin
+# decir que no se habían mirado.
+#
+# Así que la conversión de fechas se hace DENTRO de este awk, que ya está leyendo la línea:
+# mktime() con el flag UTC para el epoch (las marcas del transcript llevan 'Z', y sin el
+# flag saldrían corridas las horas del huso), y strftime() para la fecha legible en hora
+# local, que es la que se le enseña al usuario. Lo comprueba el banco
+# scripts/probar-coste-auditor.sh, que no mide segundos —eso mediría la máquina— sino que
+# corre el auditor sobre 3 y sobre 15 sesiones y exige que el número de 'date' y de 'git'
+# NO CREZCA.
 for d in "${dirs[@]}"; do
   # Un solo `find` por carpeta para el descarte por mtime. El mtime no sirve para FECHAR
   # una sesión (ese atajo me hizo dar por perdidas cuatro que sí habían anotado, la misma
@@ -364,8 +429,28 @@ for d in "${dirs[@]}"; do
   # Se usa la PRIMERA marca de cada línea a propósito: es la del propio apunte. Las que
   # vengan dentro de un resultado de herramienta son de otra cosa y no deben mover el
   # rango de la sesión.
+  #
+  # El awk devuelve YA CONVERTIDO lo que antes se le pedía a 'date' una vez por sesión:
+  # el epoch de inicio y el de fin (mktime con el flag UTC, porque las marcas llevan 'Z'),
+  # y la fecha legible en hora LOCAL, que es la que reconoce quien la lee. Un -1 en el
+  # epoch significa "no supe convertirla", y lo recoge el bucle de abajo.
+  #
+  # NINGÚN COMENTARIO DENTRO DEL PROGRAMA AWK, y no es manía de estilo: el programa va
+  # entre comillas SIMPLES del shell, así que un apóstrofo dentro -- el de un "no cabía",
+  # o el de citar una orden entre comillas simples -- cierra la cadena y le entrega a awk
+  # un programa truncado. Pasó escribiendo esto mismo el 5-sep-2026, y los dos guardias
+  # que había miraron para otro lado: 'bash -n' da el visto bueno porque los apóstrofos se
+  # emparejan entre ellos, y el '2>/dev/null' de aquí abajo se traga la queja de awk. El
+  # resultado era CERO líneas, que doce líneas más abajo se lee igual que "no hay sesiones
+  # que juzgar" -- el auditor entero mudo, con su mensaje normal. Lo cazó el banco.
   # shellcheck disable=SC2086
   awk '
+    function epoch_de(ts,   d) {
+      if (length(ts) < 19) return -1
+      d = substr(ts,1,4) " " substr(ts,6,2) " " substr(ts,9,2) " " \
+          substr(ts,12,2) " " substr(ts,15,2) " " substr(ts,18,2)
+      return mktime(d, 1)
+    }
     /"type":"assistant"/ { t[FILENAME]++ }
     {
       if (match($0, /"timestamp":"[^"]*"/)) {
@@ -374,19 +459,28 @@ for d in "${dirs[@]}"; do
         if (ts > mx[FILENAME]) mx[FILENAME] = ts
       }
     }
-    END { for (f in mn) print mn[f] "\t" mx[f] "\t" t[f] + 0 "\t" f }
+    END {
+      for (f in mn) {
+        fin = epoch_de(mx[f]); ini = epoch_de(mn[f])
+        if (ini <= 0) ini = fin
+        print ini "\t" fin "\t" t[f] + 0 "\t" \
+              (fin > 0 ? strftime("%Y-%m-%d %H:%M", fin) : "") "\t" f
+      }
+    }
   ' $lista 2>/dev/null > "$TMP.crudo"
 
-  while IFS=$'\t' read -r ini fin turnos f; do
+  while IFS=$'\t' read -r ini_epoch fin_epoch turnos fecha_leg f; do
     [ -n "$f" ] || continue
     sid=${f##*/}; sid=${sid%.jsonl}
     [ -n "$EXCLUIR" ] && [ "$sid" = "$EXCLUIR" ] && continue
 
-    fin_epoch=$(date -d "$fin" +%s 2>/dev/null) || continue
-    ini_epoch=$(date -d "$ini" +%s 2>/dev/null) || ini_epoch=$fin_epoch
+    # Sin fecha de cierre no hay nada que juzgar contra la ventana de commits, así que se
+    # salta -- igual que antes saltaba cuando 'date -d' no sabía leer la marca.
+    [ "$fin_epoch" -gt 0 ] 2>/dev/null || continue
     [ "$fin_epoch" -lt "$limite" ] && continue
 
-    printf '%s\t%s\t%s\t%s\t%s\n' "$ini_epoch" "$fin_epoch" "$turnos" "$sid" "$f" >> "$TMP"
+    printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
+      "$ini_epoch" "$fin_epoch" "$turnos" "$fecha_leg" "$sid" "$f" >> "$TMP"
   done < "$TMP.crudo"
   rm -f "$TMP.crudo"
 done
@@ -400,8 +494,28 @@ fi
 n_anotadas=0; n_deuda=0; n_dudosas=0; n_cortas=0; n_curso=0; n_cadena=0
 deudas=""
 
+# ---------- Los commits de la bitácora, UNA vez y no uno por sesión ----------
+# La pregunta de la pasada 2 es, por cada sesión, "¿hay un commit que toque $FICHERO
+# dentro de su ventana?", y se contestaba con un 'git log --since --until | wc -l' POR
+# SESIÓN: 219 ms cada uno, medido el 5-sep-2026, más los dos 'date -u -d' que hacían
+# falta solo para escribirle las fechas a git en ISO. Con 15 sesiones son 15 procesos de
+# git y 30 de date para responder 15 veces a la misma consulta con otro recorte.
+#
+# Se traen de golpe los que caen en el tramo más ancho que cualquier ventana puede
+# alcanzar —desde 'limite' menos la ventana, porque el borde bajo de una sesión que cerró
+# justo en 'limite' es VENTANA_H horas antes— y luego se cuenta en aritmética de bash,
+# que no lanza nada. La comparación es la misma: '--since/--until' filtra por fecha de
+# COMMITTER, y '%ct' es esa misma fecha, así que el conjunto contado es idéntico.
+#
+# Son decenas de commits en 14 días, o sea que el bucle anidado de aquí abajo es
+# irrelevante al lado de un solo proceso.
+commits_ct=$(git -C "$RAIZ" log --since="@$(( limite - VENTANA_H * 3600 ))" \
+               --format=%ct -- "$FICHERO" 2>/dev/null || true)
+# shellcheck disable=SC2206
+commits_ct=( $commits_ct )
+
 # ---------- Pasada 2: juzgar ----------
-while IFS=$'\t' read -r ini_epoch fin_epoch turnos sid f; do
+while IFS=$'\t' read -r ini_epoch fin_epoch turnos fecha_leg sid f; do
   [ -n "$sid" ] || continue
 
   if [ $(( ahora - fin_epoch )) -lt $(( RECIENTE_MIN * 60 )) ]; then
@@ -430,7 +544,7 @@ while IFS=$'\t' read -r ini_epoch fin_epoch turnos sid f; do
   # Ninguno de los dos se oculta: se cuentan y se dicen. Colapsarlos con ANOTADA sería
   # exactamente el fallo que este fichero existe para no repetir.
   continuada=no; nota=""
-  while IFS=$'\t' read -r o_ini o_fin o_t o_sid o_f; do
+  while IFS=$'\t' read -r o_ini o_fin o_t o_fecha o_sid o_f; do
     [ "$o_sid" = "$sid" ] && continue
     dif_ini=$(( o_ini - ini_epoch )); [ "$dif_ini" -lt 0 ] && dif_ini=$(( -dif_ini ))
     dif_rel=$(( o_ini - fin_epoch )); [ "$dif_rel" -lt 0 ] && dif_rel=$(( -dif_rel ))
@@ -442,8 +556,6 @@ while IFS=$'\t' read -r ini_epoch fin_epoch turnos sid f; do
     fi
   done < "$TMP"
 
-  fecha_leg=$(date -d "@$fin_epoch" '+%Y-%m-%d %H:%M' 2>/dev/null)
-
   if [ "$continuada" = "si" ]; then
     n_cadena=$((n_cadena + 1))
     echo "CONTINUADA  | $fecha_leg | ${turnos}t | $sid | $nota"
@@ -453,18 +565,21 @@ while IFS=$'\t' read -r ini_epoch fin_epoch turnos sid f; do
   # ---------- La comprobación que importa: el ARTEFACTO ----------
   desde_epoch=$(( fin_epoch - VENTANA_H * 3600 ))
   [ "$ini_epoch" -gt "$desde_epoch" ] && desde_epoch=$ini_epoch
-  desde=$(date -u -d "@$desde_epoch" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null)
-  hasta=$(date -u -d "@$(( fin_epoch + 900 ))" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null)
+  hasta_epoch=$(( fin_epoch + 900 ))
 
-  if [ -z "$desde" ] || [ -z "$hasta" ]; then
+  if [ -z "$fecha_leg" ]; then
     n_dudosas=$((n_dudosas + 1))
     echo "NO-SE-PUDO-COMPROBAR | $sid | no supe convertir las fechas"
     continue
   fi
 
-  commits=$(git -C "$RAIZ" log --since="$desde" --until="$hasta" \
-               --format=%h -- "$FICHERO" 2>/dev/null | wc -l)
-  commits=$(printf '%s' "$commits" | tr -dc '0-9'); commits=${commits:-0}
+  # Contra la lista traída arriba, sin lanzar nada.
+  commits=0
+  for ct in ${commits_ct[@]+"${commits_ct[@]}"}; do
+    [ "$ct" -ge "$desde_epoch" ] || continue
+    [ "$ct" -le "$hasta_epoch" ] || continue
+    commits=$((commits + 1))
+  done
 
   if [ "$commits" -gt 0 ]; then
     n_anotadas=$((n_anotadas + 1))

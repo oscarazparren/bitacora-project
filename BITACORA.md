@@ -11,6 +11,137 @@ Formato: `## AAAA-MM-DD — [dispositivo] titular`
 
 ---
 
+## 2026-09-05 — [PC viejo] El auditor sí cabía: su coste eran PROCESOS, no trabajo. 29,6 s → 3,1 s en el peor repo
+
+Resuelve la sección 6 de la entrada de abajo, que dejaba tres salidas abiertas y pedía
+elegir una: **acelerar el auditor**, subir el presupuesto del hook, o detectar el
+truncamiento. Se eligió la primera, y las otras dos no eran empate.
+
+### 1. Por qué acelerar, y por qué las otras dos perdían
+
+**Subir el presupuesto no existía como opción.** El plazo duro del hook son 45 s y la red
+ya se come 10-20. Un auditor que quiere 29 s no cabe bajo *ningún* número que se pueda
+poner en `BITACORA_PRESUPUESTO`: subirlo solo cambia quién lo mata — de `timeout 8`, que
+deja salida parcial, a Claude Code, que **descarta la salida entera sin avisar**. Es
+literalmente la avería del 28-ago. Y de paso haría esperar ese rato en cada arranque.
+
+**Detectar el truncamiento no arregla nada por sí solo.** Convierte «faltan 6 deudas en
+silencio» en «no hay auditoría en 5 de 9 repos». Es verdad en vez de mentira, que no es
+poco, pero **la deuda sigue sin verse** y enseñarla es para lo que existe la pieza. Es la
+guarda, no el arreglo.
+
+**Acelerar ganaba porque el coste no era trabajo.** El dato que lo decidió estaba ya en la
+entrada de abajo y no se había sacado la conclusión: el `awk` que hace el trabajo de verdad
+tarda **0,42 s sobre 53 MB**. Todo lo demás eran procesos.
+
+### 2. El perfil, que es lo que convirtió la sospecha en decisión
+
+Perfilado por fases antes de tocar nada:
+
+| fase | bitacora-project | lizar-informes |
+|---|---|---|
+| bloque «sesiones de fuera» | 1,05 s | 0,75 s |
+| pasada 1 (recoger) | 3,67 s | 4,65 s |
+| pasada 2 (juzgar) | 5,85 s | 7,12 s |
+| **total** | **11,3 s** | **13,2 s** |
+
+Las dos pasadas lanzaban **cinco procesos por sesión**: dos `date -d` en la primera, y en
+la segunda un `date -d` más dos `date -u -d` más un `git log --since --until | wc -l`.
+Medido aquí: `date -d` cuesta **90 ms** y `git log | wc -l` **219 ms** → ~0,7 s por sesión.
+Con 14-15 sesiones, eso es **~10 s de los 11,3 en convertir fechas**.
+
+Es la lección de la propia cabecera del script —«un proceso por carpeta, no por fichero»—
+aplicada a los ficheros y **no a las sesiones**. El mismo fallo, un piso más arriba.
+
+### 3. Qué se quitó, y la dependencia nueva que eso mete
+
+- **Las fechas se convierten dentro del `awk` que ya está leyendo la línea**: `mktime()`
+  con el flag UTC para los epochs (las marcas del transcript llevan `Z`) y `strftime()`
+  para la fecha legible en hora local. Cero `date` por sesión.
+- **Los commits de la bitácora se traen UNA vez**, con un solo `git log --format=%ct`
+  sobre el tramo más ancho que cualquier ventana puede alcanzar, y se cuentan en
+  aritmética de bash. `--since/--until` filtra por fecha de *committer* y `%ct` es esa
+  misma fecha, así que el conjunto contado es idéntico.
+- Se van con ellos el `wc -l` y el `printf | tr -dc` que limpiaba su salida.
+
+Eso mete una dependencia que antes no había: `mktime`/`strftime` son de gawk, y el flag
+UTC es de gawk 4.2 en adelante. **Se comprueba, no se supone**, porque los dos modos de
+fallo son mudos: un awk sin `mktime` aborta el programa y la pasada devuelve cero líneas
+—que se lee igual que «no hay sesiones que juzgar»—, y uno que acepte el flag y lo ignore
+da epochs corridos las dos horas del huso, lo bastante para sacar de la ventana sesiones
+que están dentro. La prueba compara contra un número concreto (`2026-01-02T03:04:05Z` =
+1767323045), así que caza los dos. Cuesta un proceso, **una vez**, y da el tercer estado
+en vez de un silencio.
+
+### 4. El banco mide PROCESOS, no segundos
+
+`scripts/probar-coste-auditor.sh`, nuevo. Un banco que dijera «tiene que tardar menos de X
+segundos» mediría la máquina, no el código: el mismo `lizar-informes` marcó 36 s con la
+caché fría y 29,6 con ella caliente, y en el PC Nuevo dará otra cosa. Un número así se
+pone en verde bajando el umbral.
+
+Así que fija **la causa**: pone en el `PATH` un `date` y un `git` que apuntan cada
+invocación antes de ceder el sitio al binario de verdad, corre el auditor sobre **3 y
+sobre 15 sesiones**, y exige que el número **no crezca**. Visto fallar antes del arreglo,
+y el fallo dice el diagnóstico entero: *5 por sesión* de `date`, *1 por sesión* de `git`.
+
+Y la otra mitad, que sin ella la primera no vale: **ocho casos que clavan el veredicto**
+contra un fixture de respuestas conocidas, con una sesión puesta a **una hora** del borde
+de la ventana de 14 días — cualquier deriva de huso la tira fuera y el banco lo canta — y
+otro que compara la fecha impresa con la que da `date` de verdad. Acelerar cambiando dónde
+se convierten las fechas puede mover un veredicto sin que nadie se entere; sin estos, el
+banco de coste se pondría verde igual.
+
+Usa git (crea un repo de mentira en un temporal), y por eso es fichero aparte: el banco de
+atribución presume de no usarlo y esa promesa se mantiene.
+
+### 5. El fallo que cometí escribiéndolo, que es del tipo que persigue este repo
+
+Puse un comentario **dentro** del programa `awk`, y el comentario llevaba un apóstrofo
+—citaba una orden como `'date -d @...'`—. El programa va entre **comillas simples del
+shell**, así que ese apóstrofo cerró la cadena y awk recibió un programa truncado.
+
+Lo que importa no es el descuido, es que **los dos guardias que había miraron para otro
+lado**: `bash -n` dio el visto bueno (los apóstrofos se emparejan entre ellos, así que la
+sintaxis del shell queda válida) y el `2>/dev/null` de esa misma línea se tragó la queja de
+awk. El resultado fue **cero líneas**, que doce líneas más abajo se lee exactamente igual
+que «Sin sesiones que juzgar en los últimos 14 días». El auditor entero mudo, con su
+mensaje de normalidad. Lo cazó el banco, que es para lo que se escribió antes que el
+código. Queda escrito en el propio sitio: **ningún comentario dentro del awk**.
+
+### 6. Lo que queda vivo, dicho y no fingido
+
+- **El truncamiento sigue sin detectarse.** Pasa de vivo a **latente**: 3,1 s contra 8 son
+  2,6x de margen, pero si algún día se vuelve a pasar, el hook lo volverá a callar. El
+  arreglo —que el auditor cierre con una marca de fin y el hook exija verla— sigue
+  pendiente y anotado en los dos ficheros.
+- **El hook entero tarda 36,4 s** de extremo a extremo en este repo, contra un plazo duro
+  de 45. La auditoría son 2,5 de esos 36: **el resto es red** (índice de 41 repos, `ssh`,
+  la comprobación del `CLAUDE.md` canónico). Es un problema distinto y más gordo que el que
+  se acaba de arreglar, y no se toca aquí.
+- Sigue vivo lo de la sección 7 de la entrada de abajo (sesiones que cruzan entre carpetas
+  normales).
+
+### Comprobado
+
+- **Los 19 repos con bitácora, antes y después: salida BYTE A BYTE idéntica** en los 19.
+  Es la comprobación que importa, porque lo que se ha tocado es cómo se calculan las
+  fechas que deciden la deuda.
+- Los tres bancos: **coste 11 ok** (nuevo, visto fallar por 3 casos), **atribución 37 ok**,
+  **`1d` 23 ok**. Sintaxis de los cuatro ficheros.
+- **Los 9 repos grandes, antes → después**: `lizar-informes` 29,6 → **3,1** (9,4x),
+  `bitacora-project` 11,4 → 2,5, `kangurea-web` 9,2 → 2,8, `lizar-correo` 7,3 → 2,2,
+  `lizar-flota` 6,3 → 2,3, `bitacora-flota` 3,1 → 2,1, `agentes-lizar` 3,7 → 2,5,
+  `lizar-panel` 2,7 → 2,0, `lizar-asistente-aula` 1,6 → 1,7 (el único que no gana: no tenía
+  nada que ganar, y paga los ~80 ms de la comprobación de awk).
+- **Bajo el `timeout 8` del hook, que era el problema**: `lizar-informes` pasa de **0
+  SIN-ANOTAR a 2**, que son los que la ejecución completa encuentra. Los cuatro repos
+  probados dan ahora lo mismo truncados que enteros.
+- **Hook de verdad, extremo a extremo**: corre entero, inyecta la auditoría, y ya no dice
+  `saltado`.
+- Los ficheros se editaron **con la herramienta de edición y no por heredoc**, por lo de
+  las barras invertidas comidas; el apóstrofo del punto 5 lo cazó el banco, no la vista.
+
 ## 2026-09-05 — [PC viejo] Las sesiones que no son de un solo repo se DECLARAN, no se reparten. Y midiendo el coste apareció algo peor: el auditor no cabe en el presupuesto del hook
 
 Cierra el "LO GORDO" de la entrada de abajo: qué hace el auditor con las 7 sesiones de

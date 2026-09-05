@@ -814,22 +814,34 @@ fi
 # tiempo se dice con saltado() y no se corre. Meterlo a ciegas en un hook con plazo
 # duro de 45 s es literalmente cómo murió el hook el 28-ago (cuarto fallo silencioso).
 #
-# YA NO CABE, Y HAY QUE DECIDIR QUÉ HACER. Aquí ponía "~3,8 s medidos"; ese número está
-# caducado. Medido el 5-sep-2026 en los 9 repos grandes de esta máquina, el auditor pasa
-# de los 8 s del 'timeout' en CINCO (lizar-informes 36 s, lizar-correo 14,7, lizar-flota
-# 14,5, kangurea-web 14,4, bitacora-project 8,7).
+# CUÁNTO CUESTA, Y POR QUÉ EL NÚMERO ESTÁ AQUÍ. El 5-sep-2026 aquí ponía "~3,8 s medidos"
+# y estaba caducado: el auditor pasaba de los 8 s de este 'timeout' en CINCO de los 9
+# repos grandes de esta máquina (lizar-informes 29,6 s, bitacora-project 11,4, kangurea-web
+# 9,2, lizar-correo 7,3, lizar-flota 6,3 -- con la caché fría, la víspera, lizar-informes
+# marcó 36 y lizar-correo y lizar-flota pasaban de 14).
 #
-# Y el modo de fallo es el malo: cuando 'timeout' lo mata, lo ya escrito en stdout SÍ ha
-# salido, así que $AUD queda PARCIAL PERO NO VACÍA y esto de abajo la trata como una
-# auditoría entera. Medido: lizar-flota, kangurea-web y lizar-informes tienen 2
-# SIN-ANOTAR cada uno en la ejecución completa y CERO en la de 8 s. Seis deudas reales
-# que el arranque no enseña, sin decir que no las ha mirado. Cuando la salida sale del
-# todo vacía sí se dice (saltado, más abajo); cuando sale truncada, no.
+# Y el modo de fallo era el malo: cuando 'timeout' lo mata, lo ya escrito en stdout SÍ ha
+# salido, así que $AUD quedaba PARCIAL PERO NO VACÍA y esto de abajo la trataba como una
+# auditoría entera. Medido: lizar-informes tenía 2 SIN-ANOTAR en la ejecución completa y
+# CERO en la de 8 s. Deuda real que el arranque no enseñaba, sin decir que no la había
+# mirado. Cuando la salida sale del todo vacía sí se dice (saltado, más abajo); cuando
+# salía truncada, no.
 #
-# NO SE PARCHEA AQUÍ a propósito: acelerar el auditor, subir el presupuesto o detectar el
-# truncamiento son tres decisiones distintas y ninguna es obvia. Queda escrito para que se
-# decida, no para que se olvide. Ver la entrada del 5-sep-2026 en la BITACORA.md del
-# proyecto, sección 6.
+# SE ARREGLÓ ACELERANDO EL AUDITOR, que era una de las tres salidas posibles -- las otras
+# eran subir el presupuesto y detectar el truncamiento. Ganó porque el coste no era
+# trabajo sino PROCESOS: el auditor llamaba a 'date' cinco veces y a 'git log' una vez POR
+# SESIÓN, mientras que el awk que hace el trabajo de verdad tarda 0,42 s. Quitados esos,
+# los 9 repos quedan entre 1,7 y 3,1 s. Subir el presupuesto no era una opción real (el
+# plazo duro son 45 s y la red ya se come 10-20: 29 s de auditoría no caben bajo ningún
+# número), y detectar el truncamiento a secas habría cambiado "faltan deudas en silencio"
+# por "no hay auditoría en 5 de 9 repos", que es honesto pero deja la deuda igual de
+# invisible. Lo vigila scripts/probar-coste-auditor.sh.
+#
+# LO QUE SIGUE VIVO, dicho y no fingido: si algún día el auditor volviera a pasarse de los
+# 8 s, ESTO DE AQUÍ ABAJO SEGUIRÍA CALLÁNDOLO. El truncamiento pasa de vivo a latente
+# (3,1 s contra 8 son 2,6x de margen), no desaparece. Detectarlo -- que el auditor cierre
+# con una marca de fin y este bloque exija verla -- sigue pendiente. Ver la entrada del
+# 5-sep-2026 en la BITACORA.md del proyecto.
 #
 # Se excluye la sesión actual ($SESION_ID): sigue viva y todavía puede anotar. El
 # auditor además la descartaría por reciente, pero pasarlo explícito no cuesta nada.
