@@ -80,19 +80,63 @@ fi
 
 # ---------- Localizar los transcripts de este repo ----------
 # Claude Code nombra la carpeta de proyecto transformando la ruta: 'C:\Users\Oscar\repos\x'
-# -> 'C--Users-Oscar-repos-x'. Se busca por PREFIJO, no por igualdad, para que una sesión
-# abierta en una SUBCARPETA del repo (el caso monorepo de agentes-lizar) también cuente:
-# esa produce 'C--Users-Oscar-repos-x-agentes-informes'.
+# -> 'C--Users-Oscar-repos-x'.
+#
+# SOLO SE ACEPTA LO QUE SE RECONOCE. Hasta el 5-sep-2026 esto casaba por prefijo abierto
+# ('$patron' y '$patron'-*), y el comentario que lo justificaba hablaba de sesiones
+# abiertas en una SUBCARPETA del repo, "el caso monorepo de agentes-lizar". Ese caso NO
+# EXISTE: medido el 5-sep en el PC viejo, cero carpetas de transcripts son subcarpeta
+# real de un repo. La frase venía de este mismo comentario y se copió a una entrada de
+# bitácora como si fuera un dato -- exactamente lo que persigue la regla "verificar antes
+# de afirmar", cometido dentro del fichero que predica mirar el artefacto.
+#
+# Lo que el prefijo abierto SÍ hacía era llevarse las sesiones de OTRO repo cuando un
+# nombre es prefijo de otro: preguntado por '~/repos/bitacora' devolvía también las de
+# 'bitacora-flota' y 'bitacora-project', las juzgaba contra la BITACORA.md equivocada y
+# cantaba deuda falsa. Medido: 7 sesiones en la primera ejecución de sueno.sh el 4-sep, y
+# un solo repo afectado de 44 (bitacora) al comparar todos los nombres de ~/repos.
+#
+# Lo que sí hay que seguir cubriendo son los WORKTREES de Claude, con nombre propio y
+# doble guion: '$patron--claude-worktrees-*'. Un worktree es el mismo repo y la misma
+# bitácora, así que atribuirle sus sesiones al repo principal es correcto. En el PC viejo
+# son 4 carpetas (agentes-lizar x2, kangurea-web, lizar-informes).
+#
+# SE ELIGE ESTA REGLA Y NO "RECHAZAR EL SUFIJO QUE SEA OTRO REPO" porque no depende de
+# qué repos existan en la máquina: da la misma respuesta en las dos, no hay que pasarle
+# al auditor una lista de repos que ahora no tiene, y no se rompe cuando el repo hermano
+# está clonado en un PC y en el otro no -- que es justo el caso en el que la alternativa
+# volvería a absorber sesiones ajenas sin avisar.
+#
+# Y LO QUE SE DESCARTA SE DICE (ver más abajo). Es la única objeción seria a estrechar
+# aquí: si alguna máquina tuviera sesiones en una subcarpeta, quedarían fuera EN
+# SILENCIO, que es la dirección que este proyecto persigue. No quedan: se nombran.
 ruta_win=$(cd "$RAIZ" && pwd -W 2>/dev/null || echo "$RAIZ")
 patron=$(printf '%s' "$ruta_win" | sed 's#[:/\\]#-#g')
 
-dirs=""
-for d in "$PROYECTOS/$patron" "$PROYECTOS/$patron"-*; do
-  [ -d "$d" ] && dirs="$dirs $d"
+# Array y no cadena: 'dirs' acaba en un 'for' sin comillas, y una ruta con espacio
+# —'~/repos/CSV Generator' existe— se partiría en dos rutas rotas.
+dirs=()
+for d in "$PROYECTOS/$patron" "$PROYECTOS/$patron"--claude-worktrees-*; do
+  [ -d "$d" ] && dirs+=("$d")
 done
 
-if [ -z "$dirs" ]; then
-  echo "NO-SE-PUDO-COMPROBAR: no encuentro transcripts para $RAIZ (buscaba $PROYECTOS/$patron*)."
+# Lo que casa por prefijo y no se reconoce. No se usa, pero tampoco se calla.
+ajenas=()
+for d in "$PROYECTOS/$patron"-*; do
+  [ -d "$d" ] || continue
+  case "${d##*/}" in "$patron"--claude-worktrees-*) continue ;; esac
+  ajenas+=("${d##*/}")
+done
+if [ "${#ajenas[@]}" -gt 0 ]; then
+  echo "NOTA: descarto ${#ajenas[@]} carpeta(s) que empiezan por el patrón de este repo pero no son suyas:"
+  printf '  %s\n' "${ajenas[@]}"
+  echo "  Se reconocen la coincidencia exacta y los worktrees ('$patron--claude-worktrees-*')."
+  echo "  Si alguna de éstas fuera de verdad este repo, sus sesiones NO se están juzgando."
+fi
+
+if [ "${#dirs[@]}" -eq 0 ]; then
+  echo "NO-SE-PUDO-COMPROBAR: no encuentro transcripts para $RAIZ"
+  echo "  (buscaba $PROYECTOS/$patron y sus '--claude-worktrees-*')."
   echo "  No es lo mismo que 'no hay sesiones sin anotar': es que no sé mirarlo."
   exit 0
 fi
@@ -118,7 +162,7 @@ trap 'rm -f "$TMP" "$TMP.crudo"' EXIT
 # come 10-20, y su plazo duro son 45. Meter ahí 9,7 s habría reconstruido LITERALMENTE la
 # avería del 28-ago —el cuarto fallo silencioso, el hook que moría por timeout— desde la
 # pieza que viene a impedirla.
-for d in $dirs; do
+for d in "${dirs[@]}"; do
   # Un solo `find` por carpeta para el descarte por mtime. El mtime no sirve para FECHAR
   # una sesión (ese atajo me hizo dar por perdidas cuatro que sí habían anotado, la misma
   # mañana que escribí esto), pero sí para descartarla: un fichero no se toca antes de

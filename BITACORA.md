@@ -11,6 +11,102 @@ Formato: `## AAAA-MM-DD — [dispositivo] titular`
 
 ---
 
+## 2026-09-05 — [PC viejo] El auditor deja de robar sesiones ajenas: solo acepta lo que reconoce, y dice en voz alta lo que descarta
+
+Cierra el pendiente que dejaron abierto las dos entradas de abajo. `auditar-sesiones.sh`
+buscaba las carpetas de transcripts por prefijo abierto —`<patron>` y `<patron>-*`— y,
+cuando el nombre de un repo era prefijo del de otro, se llevaba las sesiones del vecino,
+las juzgaba contra la `BITACORA.md` equivocada y cantaba deuda falsa.
+
+### Primero el banco de pruebas, y verlo fallar
+
+`scripts/probar-atribucion-transcripts.sh`, 18 casos. Se escribió **antes** de tocar el
+auditor y se corrió contra el código sin arreglar: **6 ok, 10 fallos**, con la forma
+exacta del defecto. Un banco que nunca se ha visto fallar no prueba nada; esta es la
+lección del 3-sep, la que hizo que se commiteara el banco de la sección `1d`.
+
+Extrae EN VIVO el bloque «Localizar los transcripts» del auditor real y lo ejecuta contra
+un fixture de carpetas vacías, así que quien edite el bloque prueba su versión nueva sin
+tocar el banco. Cero red, cero git, cero ficheros del usuario. El runner acepta que
+`dirs` sea cadena o array a propósito: es lo que permitió correr el mismo banco contra
+las dos versiones.
+
+### La medición, rehecha en esta máquina
+
+La entrada de abajo pedía rehacerla en el PC Nuevo antes de elegir. **Esta sesión es del
+PC viejo otra vez** (`LAPTOP-8T7L4J9S`, git firma `Oscar`), así que **la medición del PC
+Nuevo sigue pendiente** — y el arreglo está hecho de forma que eso ya no bloquee, ver
+abajo. Lo medido hoy aquí, sobre 44 repos y 23 carpetas de transcripts:
+
+- **Cero carpetas que sean subcarpeta real de un repo.** Confirmado por segunda vez.
+- **4 carpetas de worktree**, no 2: `agentes-lizar` (dos), `kangurea-web` y
+  `lizar-informes`. La entrada de abajo solo había visto las de `agentes-lizar`.
+- **Una sola colisión de nombres**: `bitacora` sobre `bitacora-flota` y
+  `bitacora-project`. Sin cambios respecto a ayer.
+
+### Se elige la opción 1, y se le quita su único defecto
+
+Acepta la **coincidencia exacta** más `<patron>--claude-worktrees-*`. La opción 2
+—rechazar el sufijo que sea otro repo— se descarta por una razón que no estaba escrita
+ayer: **depende de qué repos existan en la máquina**. Habría que pasarle al auditor una
+lista que hoy no tiene, daría respuestas distintas en cada PC, y **volvería a absorber
+las sesiones ajenas justo cuando el repo hermano no está clonado aquí** — que es el caso
+en el que nadie lo notaría.
+
+La objeción seria a la opción 1 era que, si alguna máquina sí tuviera sesiones en una
+subcarpeta, quedarían fuera **en silencio**. Se responde no callándose: lo que casa por
+prefijo y no se reconoce **se nombra en la salida**, con qué sí se reconoce y qué
+significa. Eso convierte la medición pendiente del PC Nuevo en un aviso automático en su
+primer arranque, en vez de en un requisito previo.
+
+```
+NOTA: descarto 2 carpeta(s) que empiezan por el patrón de este repo pero no son suyas:
+  C--Users-Oscar-repos-bitacora-flota
+  C--Users-Oscar-repos-bitacora-project
+  Se reconocen la coincidencia exacta y los worktrees (...).
+  Si alguna de éstas fuera de verdad este repo, sus sesiones NO se están juzgando.
+```
+
+Y al revés: **cuando no se descarta nada, ni una línea**. El auditor corre en cada
+arranque de las dos máquinas; una nota que sale siempre deja de leerse. Dos casos del
+banco (`6a`, `6b`) existen solo para clavar ese silencio.
+
+### Medido, antes y después
+
+- `~/repos/bitacora`: **8 SIN-ANOTAR → 0**. Dos de esas ocho (`8b6fd5e8`, `39bdc93d`) son
+  exactamente las sesiones que `bitacora-project` da por **ANOTADA** en la misma pasada:
+  la prueba de que las juzgaba contra la bitácora que no era.
+- `bitacora-project` y `agentes-lizar` (con sus dos worktrees): salida idéntica a antes.
+- Banco de la `1d`: sigue en **23 ok, 0 fallos**. Auditor en el repo más cargado
+  (`videoanalisis`, 38 transcripts): **0,79 s**, dentro del presupuesto de la cabecera.
+- Los tres consumidores de la salida siguen leyendo bien: el hook filtra `^SIN-ANOTAR ` y
+  extrae rutas de `PENDIENTES DE ANOTAR:`; la `NOTA` va arriba y no casa con ninguno de
+  los dos patrones. Comprobado ejecutando los mismos `grep`/`sed` del hook.
+
+### De paso: `dirs` pasa de cadena a array
+
+Estaba en un `for` sin comillas, así que una ruta con espacio se partía en dos rutas
+rotas. No es teórico: **`~/repos/CSV Generator` existe**.
+
+### PENDIENTE que destapa la medición y NO se arregla aquí
+
+**El auditor no encuentra los transcripts de un repo cuyo nombre lleva espacios.** Claude
+Code nombra la carpeta `C--Users-Oscar-repos-CSV-Generator` (espacio → guion), pero el
+`sed` del auditor solo transforma `:`, `/` y `\`, así que calcula
+`C--Users-Oscar-repos-CSV Generator` y sale `NO-SE-PUDO-COMPROBAR`. Es un fallo distinto,
+vivo hoy en esta máquina en un repo de 44. **No se toca sin medir antes qué hace Claude
+Code con el resto de caracteres raros**: cambiar el `sed` a ojo arriesga los 11 repos que
+hoy sí casan, y eso es cambiar un fallo ruidoso por uno silencioso.
+
+### Y el comentario de `sueno.sh`, reescrito
+
+Decía «no se toca el auditor […] queda anotado como pendiente», que ya es falso. **El
+filtro `duena_de` se queda igualmente**, como segunda línea y no como el arreglo: el sueño
+invoca al auditor que encuentre en el disco, que puede ser una copia vieja de otra máquina
+o del servidor de flota. Allí sale gratis porque la lista de repos ya está delante — que
+es justo lo que al auditor le falta.
+
+
 ## 2026-09-05 — [PC viejo] Corrección: el «caso monorepo» que justifica el prefijo del auditor NO existe en esta máquina, y el radio del fallo es un solo repo
 
 Corrige la entrada de ayer, «El sueño». El fallo descrito ahí es real y sigue siéndolo;

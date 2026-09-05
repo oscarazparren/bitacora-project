@@ -221,17 +221,23 @@ printf '\n_Ventana propia del auditor (`BITACORA_AUDITORIA_DIAS`), no la de `--d
 
 AUDITOR="$AQUI/auditar-sesiones.sh"
 
-# CADA TRANSCRIPT TIENE UN SOLO DUEÑO, Y HAY QUE DECIDIRLO AQUÍ. El auditor busca las
-# carpetas de transcripts por PREFIJO ('C--Users-Oscar-repos-x' y 'C--Users-Oscar-repos-x-*')
-# para cubrir las sesiones abiertas en una SUBCARPETA del repo -- el caso monorepo de
-# agentes-lizar. El efecto colateral aparece cuando el nombre de un repo es prefijo del
-# de otro: preguntado por '~/repos/bitacora', el auditor devuelve también las sesiones de
-# 'bitacora-flota' y 'bitacora-project'. Medido en la primera ejecución de este script:
-# proponía reconstruir 7 sesiones "de bitacora" que eran de otros dos repos.
+# CADA TRANSCRIPT TIENE UN SOLO DUEÑO. El auditor buscaba las carpetas por PREFIJO
+# abierto y, cuando el nombre de un repo era prefijo del de otro, se llevaba las sesiones
+# ajenas: preguntado por '~/repos/bitacora' devolvía también las de 'bitacora-flota' y
+# 'bitacora-project'. Medido en la primera ejecución de este script: proponía reconstruir
+# 7 sesiones "de bitacora" que eran de otros dos repos.
 #
-# Aquí se corrige asignando cada transcript al repo cuyo patrón case MÁS LARGO, que es el
-# más específico. No se toca el auditor: corre en CADA arranque de las dos máquinas, y
-# una regresión ahí las rompe las dos (lección del 3-sep). Queda anotado como pendiente.
+# ARREGLADO EN EL AUDITOR el 5-sep-2026, con su banco de pruebas
+# (scripts/probar-atribucion-transcripts.sh): ahora solo acepta la coincidencia exacta y
+# los worktrees de Claude, y NOMBRA lo que descarta. Medido después: las 8 deudas falsas
+# de '~/repos/bitacora' pasaron a 0.
+#
+# ESTE FILTRO SE QUEDA, como segunda línea y no como el arreglo. Razón concreta: el sueño
+# invoca al auditor que encuentre en el disco, que puede ser una copia vieja —otra
+# máquina, o el servidor de flota— y entonces la deuda falsa volvería sin que nada la
+# frene. Aquí sale gratis: la lista de repos ya está delante, que es justo lo que al
+# auditor le falta. Asigna cada transcript al repo cuyo patrón case MÁS LARGO, el más
+# específico.
 PATRONES=$(mktemp)
 for repo in $REPOS; do
   rw=$(cd "$repo" && pwd -W 2>/dev/null || echo "$repo")
