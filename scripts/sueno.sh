@@ -300,7 +300,14 @@ Son las que incumplen \"un chat por repo\" del CLAUDE.md. Mirarlas es cosa de un
 si alguna dejó decisiones que importan, van a la bitácora del repo donde importen."
     fi
 
-    pendientes=$(printf '%s\n' "$salida" | sed -n '/^PENDIENTES DE ANOTAR:/,$p' | sed '1d' | sed '/^[[:space:]]*$/d')
+    # La marca de fin del auditor va en su ÚLTIMA línea, o sea DENTRO de este rango, que
+    # llega hasta el final. Aquí se cae sola más abajo (no lleva '.jsonl' y el filtro la
+    # descarta), pero se quita explícitamente: depender de que otro filtro la tire por
+    # casualidad es exactamente cómo dos piezas que leen lo mismo se separan sin avisar.
+    # El sueño NO avisa de truncamiento porque no lo sufre: corre el auditor sin 'timeout'.
+    pendientes=$(printf '%s\n' "$salida" | sed -n '/^PENDIENTES DE ANOTAR:/,$p' | sed '1d' \
+                   | grep -vF -- '--- fin de la auditoría (salida completa) ---' \
+                   | sed '/^[[:space:]]*$/d')
     [ -n "$pendientes" ] || continue
 
     # Se quedan solo las sesiones de las que ESTE repo es el dueño más específico.

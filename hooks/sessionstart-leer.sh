@@ -863,9 +863,26 @@ if [ -n "$RAIZ" ] && [ -n "$MOSTRAR" ] && [ -f "$F" ]; then
   if [ -n "$AUDITOR" ]; then
     if hay_tiempo 6; then
       AUD=$(timeout "$(tope 8)" bash "$AUDITOR" "$RAIZ" "${SESION_ID:-}" 2>/dev/null || true)
+      # LA SALIDA A MEDIAS YA NO PASA POR ENTERA. El auditor cierra con una marca en su
+      # ÚLTIMA línea; si no está, es que 'timeout' lo mató a mitad de frase. Antes ese caso
+      # era indistinguible de una auditoría completa —los dos son texto con veredictos
+      # dentro— y el arranque enseñaba media deuda con cara de deuda entera. Ahora lo que
+      # llegó se sigue mostrando (es información buena, solo que incompleta) pero se dice
+      # que falta, que es la diferencia entre "no hay más" y "no lo sé".
+      AUD_MARCA='--- fin de la auditoría (salida completa) ---'
+      AUD_TRUNCADA=""
+      [ -n "$AUD" ] && [ "$(printf '%s\n' "$AUD" | tail -1)" != "$AUD_MARCA" ] && AUD_TRUNCADA="si"
       if [ -z "$AUD" ]; then
         saltado "auditoría de sesiones sin anotar: no terminó dentro del presupuesto"
       else
+        if [ -n "$AUD_TRUNCADA" ]; then
+          SALIDA="${SALIDA}=== LA AUDITORÍA NO TERMINÓ: LO DE ABAJO ESTÁ INCOMPLETO ===
+El auditor se pasó del plazo que le da este hook y lo mataron a media salida, así que
+lo que sigue es lo que le dio tiempo a decir, NO todo lo que hay. Puede faltar deuda.
+Para verla entera:  bash \"$AUDITOR\" \"$RAIZ\"
+
+"
+        fi
         # SESIONES QUE NO SON DE UN SOLO REPO. Desde el 5-sep-2026 el auditor también
         # declara las sesiones abiertas por encima del repo (la raíz del disco, o el home)
         # que trabajaron aquí y en otros sitios. NO son deuda y no llevan borrador: el

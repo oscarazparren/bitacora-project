@@ -109,16 +109,65 @@ que «Sin sesiones que juzgar en los últimos 14 días». El auditor entero mudo
 mensaje de normalidad. Lo cazó el banco, que es para lo que se escribió antes que el
 código. Queda escrito en el propio sitio: **ningún comentario dentro del awk**.
 
-### 6. Lo que queda vivo, dicho y no fingido
+### 6. CORRECCIÓN: la salida truncada NO era «parcial pero no vacía». Era vacía
 
-- **El truncamiento sigue sin detectarse.** Pasa de vivo a **latente**: 3,1 s contra 8 son
-  2,6x de margen, pero si algún día se vuelve a pasar, el hook lo volverá a callar. El
-  arreglo —que el auditor cierre con una marca de fin y el hook exija verla— sigue
-  pendiente y anotado en los dos ficheros.
+La entrada de abajo —y la primera versión de ésta— decían que al matarlo el `timeout` el
+auditor dejaba salida **parcial**, y que el hook la trataba como entera. **Medido hoy: es
+falso.** El auditor viejo bajo `timeout 8`, llamado exactamente como lo llama el hook,
+devuelve **cero líneas**; y también cero al redirigir a un fichero.
+
+La razón es el buffer: stdout va **por bloques** cuando no es una terminal, la salida
+entera del auditor son ~1,5 KB y el bloque son 4 KB, así que cuando lo matan **no ha
+salido ni un byte**. El hook caía entonces en su rama `[ -z "$AUD" ]` y decía `saltado`.
+
+**Lo verdadero y lo falso, separados:**
+
+- **Verdadero**: esas deudas no se veían. El arranque no las enseñaba.
+- **FALSO**: que se callara. Decía `saltado`, que es visible y correcto.
+
+De dónde salió el error: se midió «0 SIN-ANOTAR con `timeout 8`» y se dedujo «salida
+parcial» **sin comprobar que no estuviera vacía**. Es el mismo patrón que ya se corrigió
+dos veces en este fichero: verificar el mecanismo y dar por buena la consecuencia sin
+mirarla. Tercera vez, y las tres dentro de entradas que presumían de medir.
+
+**No cambia la decisión de esta entrada** —el auditor tardaba 29,6 s y había que
+acelerarlo igual— pero sí cambia por qué: no se estaba mintiendo, se estaba **callando el
+resultado entero** en 5 de 9 repos.
+
+### 7. Y aun así se puso la marca de fin, porque el caso existe
+
+Con la premisa corregida, detectar el truncamiento ya no arregla un fallo vivo. Se hizo de
+todas formas y por una razón medible: el silencio depende del **tamaño de la salida**. Un
+repo con salida por encima del bloque de 4 KB —bastan unas 60 sesiones juzgadas— sí
+soltaría media auditoría, y entonces el fallo silencioso sería real. Hoy no lo es por
+accidente aritmético, no por diseño.
+
+El auditor cierra con `--- fin de la auditoría (salida completa) ---` **en su última línea
+y por todas sus puertas** (las seis salidas, incluidas las cortas: no es un repo git, no
+hay bitácora, no hay transcripts). **No se usa un `trap EXIT`** a propósito: el trap
+también se dispara cuando a uno lo matan, o sea que firmaría como completa justo la salida
+que viene a delatar.
+
+Los tres que leen al auditor, otra vez, y aquí duele por partida doble: el **hook** tiene
+que EXIGIR la marca (si falta, enseña lo que llegó pero dice que está incompleto, en vez
+de darlo por todo), y el **sueño** tiene que QUITARLA, porque su bloque `PENDIENTES` lee
+hasta el final del texto y se le colaría como una pendiente más. Ahí se caía sola por un
+filtro de `.jsonl`, y depender de eso es exactamente cómo dos piezas que leen lo mismo se
+separan sin avisar: se quita explícita. Casos 12 a 15 del banco.
+
+### 8. Lo que queda vivo, dicho y no fingido
+
 - **El hook entero tarda 36,4 s** de extremo a extremo en este repo, contra un plazo duro
   de 45. La auditoría son 2,5 de esos 36: **el resto es red** (índice de 41 repos, `ssh`,
   la comprobación del `CLAUDE.md` canónico). Es un problema distinto y más gordo que el que
-  se acaba de arreglar, y no se toca aquí.
+  se acaba de arreglar.
+- **El bucle de la medición de coste está ABIERTO, y no se sabía.** Preguntado hoy por
+  Oscar: `coste-sesiones.py` mide el gasto, pero **solo lo lanza `sueno.sh` o una mano**, no
+  hay dashboard ni HTML en ninguna parte del repo, y —lo importante— **el aviso que
+  recomienda cortar la sesión no lee ni un dato suyo**: lleva `200000` y `400000` fijos en
+  el código de `userpromptsubmit-contexto.sh`. `calibrar-umbral.py` recalcula ese número
+  pero hay que ejecutarlo a mano, y se ejecutó una vez, el 31-ago. O sea que se mide para
+  nadie: la recomendación no aprende de lo medido.
 - Sigue vivo lo de la sección 7 de la entrada de abajo (sesiones que cruzan entre carpetas
   normales).
 
@@ -141,6 +190,15 @@ código. Queda escrito en el propio sitio: **ningún comentario dentro del awk**
   `saltado`.
 - Los ficheros se editaron **con la herramienta de edición y no por heredoc**, por lo de
   las barras invertidas comidas; el apóstrofo del punto 5 lo cazó el banco, no la vista.
+- **Marca de fin**: banco de coste **15 ok** (3 casos nuevos), atribución 37, `1d` 23.
+  Comprobado que la salida entera la lleva y que las salidas cortas también, y que el
+  auditor viejo bajo `timeout 8` da **0 líneas** — que es lo que destapó la corrección del
+  punto 6.
+- **Regla cambiada en el `CLAUDE.md` local** a petición de Oscar: el mensaje de arranque
+  solo se da **si queda algo que hacer**; si no queda, se dice que ha terminado y no se
+  manda abrir otro chat. Y lo pendiente, por pequeño que sea, se acaba en la sesión que lo
+  empezó. El canónico de `bitacora-flota` no se toca desde aquí (un chat por repo) y ya
+  venía divergido; el hook lo avisa en cada arranque.
 
 ## 2026-09-05 — [PC viejo] Las sesiones que no son de un solo repo se DECLARAN, no se reparten. Y midiendo el coste apareció algo peor: el auditor no cabe en el presupuesto del hook
 

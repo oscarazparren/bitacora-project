@@ -302,6 +302,54 @@ else
   FALLA=$((FALLA + 1))
 fi
 
+# =========================================================================
+# LA MARCA DE FIN: distinguir una salida entera de una cortada a medias
+# =========================================================================
+# El hook corre el auditor con 'timeout 8'. Cuando lo mata, lo ya escrito en stdout SÍ
+# salió, así que sin una marca de cierre una auditoría A MEDIAS es indistinguible de una
+# completa: las dos son texto con veredictos dentro. Acelerar el auditor bajó eso de vivo
+# a latente (3,1 s contra 8), pero latente no es imposible, y el día que vuelva a pasar el
+# arranque volvería a enseñar media deuda con cara de deuda entera.
+MARCA='--- fin de la auditoría (salida completa) ---'
+
+ULTIMA=$(printf '%s\n' "$OJ" | tail -1)
+if [ "$ULTIMA" = "$MARCA" ]; then
+  printf '  ok    %s\n' "12 la salida completa termina con la marca de fin"; PASA=$((PASA + 1))
+else
+  printf '  FALLA %s\n        última línea: %s\n' \
+    "12 la salida completa termina con la marca de fin" "$ULTIMA"
+  FALLA=$((FALLA + 1))
+fi
+
+# Por TODAS las puertas, no solo por la principal. El auditor sale antes de tiempo en
+# varios sitios legítimos -- no es un repo git, no hay bitácora, no hay transcripts -- y
+# una de esas salidas sin marca haría que el hook cantara "truncada" cuando no lo está:
+# ruido en la pieza que existe para que se lea el aviso de verdad.
+SIN_TRANSCRIPTS=$(correr "$TMP/proyectos-vacios" "$TMP/cont-vacio")
+espera "13 la salida corta (sin transcripts) también la lleva" "$MARCA" \
+  "$(printf '%s\n' "$SIN_TRANSCRIPTS" | tail -1)"
+
+NO_REPO=$( BITACORA_CONF="$TMP/esta-conf-no-existe" bash "$AUDITOR" "$TMP/bin" 2>/dev/null )
+espera "14 y la de 'esto no es un repo git', igual" "$MARCA" \
+  "$(printf '%s\n' "$NO_REPO" | tail -1)"
+
+# LOS TRES QUE LEEN AL AUDITOR TIENEN QUE CONOCERLA. Es el mismo argumento del caso 16 del
+# banco de atribución: el auditor puede decir algo nuevo y los que le leen seguir sin
+# enterarse. Aquí duele por partida doble -- el hook tiene que EXIGIRLA para detectar el
+# truncamiento, y el sueño tiene que QUITARLA para que no se le cuele como una pendiente.
+RAIZ_REPO=$(cd "$AQUI/.." && pwd)
+faltan=""
+for pieza in scripts/auditar-sesiones.sh hooks/sessionstart-leer.sh scripts/sueno.sh; do
+  grep -qF -- "$MARCA" "$RAIZ_REPO/$pieza" 2>/dev/null || faltan="$faltan $pieza"
+done
+if [ -z "$faltan" ]; then
+  printf '  ok    %s\n' "15 los 3 que leen al auditor conocen la marca de fin"; PASA=$((PASA + 1))
+else
+  printf '  FALLA %s\n        no la conocen:%s\n' \
+    "15 los 3 que leen al auditor conocen la marca de fin" "$faltan"
+  FALLA=$((FALLA + 1))
+fi
+
 echo
 echo "  $PASA ok, $FALLA falla(s)"
 [ "$FALLA" -eq 0 ]

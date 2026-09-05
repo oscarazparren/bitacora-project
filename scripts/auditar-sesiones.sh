@@ -30,6 +30,20 @@
 # es un informe, no una comprobación que deba tumbar nada.
 set -uo pipefail
 
+# ---------- La marca de que esta salida está ENTERA ----------
+# El hook de arranque corre este script con 'timeout 8'. Cuando lo mata, lo ya escrito en
+# stdout SÍ ha salido, así que quien lo lee recibe una auditoría A MEDIAS y no tiene forma
+# de distinguirla de una completa: los dos casos son texto con veredictos dentro. Medido el
+# 5-sep-2026, antes de acelerar el script: lizar-informes cantaba 2 SIN-ANOTAR enteros y
+# CERO bajo el timeout, sin una sola línea que dijera que faltaba algo.
+#
+# La marca la imprime la ÚLTIMA línea de todas y por todas las salidas, así que si no está,
+# es que este script no llegó al final. Se emite explícitamente en cada 'fin' y NO con un
+# 'trap EXIT' a propósito: un trap también se dispara cuando a uno lo matan, o sea que
+# firmaría como completa justo la salida truncada que viene a delatar.
+MARCA_FIN="--- fin de la auditoría (salida completa) ---"
+fin() { echo "$MARCA_FIN"; exit 0; }
+
 CONF="${BITACORA_CONF:-$HOME/.claude/bitacora.conf}"
 # shellcheck disable=SC1090
 [ -f "$CONF" ] && . "$CONF"
@@ -65,7 +79,7 @@ EXCLUIR="${2:-}"
 # ---------- Localizar el repo y su bitácora ----------
 if ! RAIZ=$(git -C "$REPO" rev-parse --show-toplevel 2>/dev/null); then
   echo "NO-APLICA: $REPO no está dentro de una copia de trabajo de git."
-  exit 0
+  fin
 fi
 # El estilo de ruta que devuelve git ('C:/Users/...') no es el de $PWD ('/c/Users/...').
 # Compararlas como texto nunca da igual aunque sean la misma carpeta: ya costó un bug en
@@ -75,7 +89,7 @@ BITACORA="$RAIZ/$FICHERO"
 
 if [ ! -f "$BITACORA" ]; then
   echo "NO-APLICA: $RAIZ no tiene $FICHERO. No hay dónde anotar."
-  exit 0
+  fin
 fi
 
 # ---------- Lo que este script le pide a awk, comprobado y no supuesto ----------
@@ -100,7 +114,7 @@ if ! awk 'BEGIN { exit !(mktime("2026 01 02 03 04 05", 1) == 1767323045 && strft
   echo "  Hacen falta mktime() y strftime() con el flag UTC (gawk 4.2 o posterior)."
   echo "  Sin eso las fechas saldrían corridas y la deuda se calcularía mal EN SILENCIO."
   echo "  Prefiero no decir nada a decir algo falso: esto no es 'no hay deuda'."
-  exit 0
+  fin
 fi
 
 # ---------- Localizar los transcripts de este repo ----------
@@ -363,7 +377,7 @@ if [ "${#dirs[@]}" -eq 0 ]; then
   echo "NO-SE-PUDO-COMPROBAR: no encuentro transcripts para $RAIZ"
   echo "  (buscaba $PROYECTOS/$patron y sus '--claude-worktrees-*')."
   echo "  No es lo mismo que 'no hay sesiones sin anotar': es que no sé mirarlo."
-  exit 0
+  fin
 fi
 
 ahora=$(date +%s)
@@ -488,7 +502,7 @@ done
 if [ ! -s "$TMP" ]; then
   decir_sueltas
   echo "Sin sesiones que juzgar en los últimos $DIAS días para $RAIZ."
-  exit 0
+  fin
 fi
 
 n_anotadas=0; n_deuda=0; n_dudosas=0; n_cortas=0; n_curso=0; n_cadena=0
@@ -611,4 +625,4 @@ if [ "$n_deuda" -gt 0 ]; then
   echo "PENDIENTES DE ANOTAR:"
   printf '%s' "$deudas"
 fi
-exit 0
+fin
