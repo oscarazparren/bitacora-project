@@ -11,6 +11,91 @@ Formato: `## AAAA-MM-DD — [dispositivo] titular`
 
 ---
 
+## 2026-09-06 — [PC viejo] Los dos repos mudos ya no lo están, y al comprobarlo apareció que llevaban semanas sin estarlo: existe una GitHub App que nadie había anotado
+
+Madrugada del 6, continuación directa de la sesión del 5. Cierra el cabo suelto que dejó
+escrito `lizar-puente/BITACORA.md` en su entrada del 05/09 (pasos 0.3 y 0.4 de la
+auditoría del 04/09, apartado 11 de `agentes-lizar/docs/auditoria-lizar-2026-09-04.md`).
+
+### 1. Los dos webhooks que faltaban, creados y verificados contra GitHub
+
+`bash scripts/sincronizar-webhooks.sh` sin `--revisar`. Comprobado **en `gh api`, no en
+el resumen del script**, que es justamente lo que falló ayer:
+
+- `lizar-puente` → hook `675076369`
+- `lizar-cuentas-claras` → hook `675076408`
+
+Los dos a `https://n8n.lizaraia.com/gh-bitacora/`, `active=true`, evento `push`,
+`content_type=json`, con secreto. Un `--revisar` posterior recorre la cuenta entera y
+dice `les falta: 0 | ya avisan: 42 | archivados (no aplica): 2`.
+
+### 2. El resumen que decía «creados» sin haber creado nada
+
+El defecto que hizo falsa la comprobación de ayer: en `--revisar` el contador de repos
+detectados era **el mismo** que el de creados, así que la línea final informaba
+`creados: 2` con los dos webhooks todavía sin existir. Un modo que existe *para
+comprobar* terminaba dando una confirmación falsa.
+
+Arreglado con dos contadores separados —`FALTAN` cuenta lo detectado, `CREADOS` solo lo
+creado de verdad— y un resumen que se etiqueta según el modo. En `--revisar` ahora sale
+`les falta: N` y una segunda línea que dice explícitamente que no se ha creado nada.
+Probada la rama con valores distintos de cero: el caso de ayer imprimiría `les falta: 2`.
+
+### 3. `repos.txt`: 41 → 42, y ahora coincide exactamente con la cuenta
+
+`lizar-cuentas-claras` (agente n.º 24, creado por el PC Nuevo el 04/09) no estaba en
+`/opt/bitacora/repos.txt`. Insertado en su sitio alfabético, línea 32, entre
+`lizar-crmsync` y `lizar-demora`. Copia previa en `/opt/bitacora/repos.txt.bak-20260906`.
+
+Verificado después, y no solo la línea: orden alfabético completo contra `LC_ALL=C sort`
+(idéntico), sin duplicados, y **`comm` en las dos direcciones contra los 42 no archivados
+de la cuenta: 42 = 42, ningún sobrante ni por un lado ni por el otro**.
+
+### 4. Lo que apareció al verificar: la premisa de ayer era falsa, y hay una GitHub App
+
+Antes de dar por cerrado, se miró `estado.txt` esperando encontrar a los dos repos sin
+fila —los webhooks solo avisan de pushes futuros, así que un repo recién enganchado sale
+en el índice como «SIN DATOS TODAVÍA» hasta el siguiente push, y para eso existe
+`scripts/sembrar-estado.sh`. **No hacía falta sembrar: los dos ya tenían fila.** Y no una
+fila sembrada, sino una **real**, sin la marca de 4.ª columna y con la hora exacta de su
+push:
+
+```
+lizar-cuentas-claras  c24262ba…  2026-09-04T19:35:15+00:00
+lizar-puente          0dda738f…  2026-09-05T16:49:09+00:00
+```
+
+Los SHA coinciden con la punta actual de cada repo. El journal del receptor tiene las tres
+entregas (`OK lizar-cuentas-claras`, y las dos de `lizar-puente`, incluida la del commit
+inicial `dce7af9`), a la hora del push. Y `receptor-webhook.py` **solo** tiene una entrada:
+un POST con `X-Hub-Signature-256` válida y `X-GitHub-Event`. Ni los hooks del cliente ni
+`anotar.sh` ni `bitacora-hook.sh` mandan nada ahí; no hay ningún flujo `gh-bitacora` en
+n8n (el endpoint lo sirve el proxy directo al receptor).
+
+O sea: **GitHub estaba entregando pushes firmados de dos repos que no tenían webhook**.
+La explicación estaba en `github.com/settings/installations`: hay una **GitHub App
+instalada en la cuenta, `lizar-bitacora-avisos`**. Es exactamente «el arreglo de verdad»
+que la cabecera de `sincronizar-webhooks.sh` decía que no existía. Cabecera corregida.
+
+**Qué cambia esto.**
+
+- La frase de ayer «con la línea en `repos.txt` y sin webhook, este repo saldría en el
+  índice como un "sin datos" permanente» **era falsa**. Estaba razonada, era coherente con
+  lo que decía el código, y aun así los dos repos llevaban avisando desde su primer push.
+- Los webhooks del punto 1 no sobran, pero son **un segundo aviso del mismo push**, no lo
+  que sostiene el arranque. Es inofensivo: el receptor reescribe la misma fila con el
+  mismo SHA.
+- **Sin verificar, y es lo único que queda abierto:** el alcance literal de la App
+  («All repositories» o una lista escogida). Esa página pide reautenticación por correo,
+  que la tiene que hacer Oscar. Que cubriera dos repos creados *después* de instalarla
+  apunta a «All repositories», pero apuntar no es comprobar, y de eso depende si
+  `sincronizar-webhooks.sh` sigue haciendo falta para los repos futuros.
+
+**La lección, que es la de siempre en este repo:** el fallo no fue de razonamiento sino de
+no mirar el artefacto. Bastaba abrir `estado.txt` —el sitio donde se ve el efecto— en vez
+de deducirlo de `hooks` y de la cabecera de un script. Igual que el resumen del punto 2:
+dos comprobaciones que se creyeron hechas leyendo un texto en vez del resultado.
+
 ## 2026-09-05 — [PC viejo] El auditor sí cabía: su coste eran PROCESOS, no trabajo. 29,6 s → 3,1 s en el peor repo
 
 Resuelve la sección 6 de la entrada de abajo, que dejaba tres salidas abiertas y pedía

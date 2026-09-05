@@ -13,9 +13,21 @@
 #
 # NO ES EL ARREGLO DEFINITIVO, y conviene decirlo aquí para que no se venda como tal:
 # sigue habiendo que EJECUTARLO. El arreglo de verdad es una GitHub App instalada en la
-# cuenta con acceso a "All repositories": esa cubre los repos futuros sola, sin que nadie
-# lance nada. Requiere unos clics en la web de GitHub que no se pueden hacer por API.
-# Mientras eso no exista, esto es un paso manual menos frágil que diez.
+# cuenta con acceso a "All repositories": cubre los repos futuros sola, sin que nadie
+# lance nada.
+#
+# ESA APP YA EXISTE — descubierto el 06/09/2026, y esta cabecera decía lo contrario.
+# Se llama `lizar-bitacora-avisos` y está instalada en la cuenta (se ve en
+# github.com/settings/installations). Se destapó porque lizar-puente y
+# lizar-cuentas-claras YA tenían fila real en estado.txt, con la hora exacta de su push,
+# SIN tener webhook de repositorio: el journal del receptor registra entregas firmadas
+# de GitHub que ningún webhook de esos repos pudo mandar. Lo que crea este script es,
+# entonces, un SEGUNDO aviso del mismo push: no estorba —el receptor reescribe la misma
+# fila con el mismo SHA— pero tampoco es lo que sostiene el arranque.
+# SIN VERIFICAR: el alcance literal de la App ("All repositories" o una lista escogida).
+# Esa página pide reautenticación por correo y la tiene que abrir Oscar. Que cubriera
+# dos repos creados DESPUÉS de instalarla apunta a "All repositories", pero apuntar no
+# es comprobar. Mientras no se confirme, este script es la red, no el mecanismo.
 #
 # EL DEFECTO ES "TODOS", Y ES A PROPÓSITO. La primera versión de este script leía por
 # defecto la lista de repos.txt, escrita a mano cuando cada repo vigilado costaba ~4s de
@@ -48,7 +60,7 @@ for arg in "$@"; do
     --indice)  MODO="indice" ;;
     --todos)   MODO="todos" ;;   # se acepta por compatibilidad; ya es el defecto
     --revisar) REVISAR=si ;;
-    -h|--help) sed -n '2,38p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,46p' "$0"; exit 0 ;;
     *) echo "opción desconocida: $arg (usa --indice, --revisar o --help)" >&2; exit 2 ;;
   esac
 done
@@ -79,7 +91,7 @@ echo "URL destino: $URL"
 echo "modo: $MODO$([ "$REVISAR" = si ] && echo ' (solo revisar)')"
 echo
 
-CREADOS=0; YA=0; FALLOS=0; ARCHIVADOS=0
+CREADOS=0; FALTAN=0; YA=0; FALLOS=0; ARCHIVADOS=0
 for R in $REPOS; do
   # Un repo archivado es de solo lectura: GitHub rechaza crear webhooks en él, y aunque
   # los aceptara nunca dispararían porque no puede recibir push. Contarlo como fallo
@@ -100,7 +112,7 @@ for R in $REPOS; do
   fi
   if [ "$REVISAR" = si ]; then
     echo "  $R: LE FALTA (no se crea, modo revisar)"
-    CREADOS=$((CREADOS+1)); continue
+    FALTAN=$((FALTAN+1)); continue
   fi
   CUERPO=$(SEC="$SECRETO" U="$URL" python -c "import json,os;print(json.dumps({'name':'web','active':True,'events':['push'],'config':{'url':os.environ['U'],'content_type':'json','secret':os.environ['SEC'],'insecure_ssl':'0'}}))" 2>/dev/null)
   [ -n "$CUERPO" ] || { echo "  $R: no pude construir la petición (¿falta python?)"; FALLOS=$((FALLOS+1)); continue; }
@@ -115,7 +127,18 @@ done
 rm -f /tmp/bitacora-hook-err
 
 echo
-echo "creados: $CREADOS | ya estaban: $YA | archivados (no aplica): $ARCHIVADOS | fallos: $FALLOS"
+# EL RESUMEN DICE LO QUE HA PASADO, NO LO QUE HABRÍA PASADO. Hasta el 05/09/2026 esta
+# línea decía "creados: N" también en --revisar, que no crea nada: ese día informó
+# "creados: 2" con los dos webhooks todavía sin existir en GitHub. Un resumen que miente
+# en la etiqueta convierte una comprobación en una falsa confirmación — justo lo
+# contrario de para lo que existe --revisar. Por eso ahora hay dos contadores: FALTAN
+# cuenta lo detectado y CREADOS solo lo creado de verdad.
+if [ "$REVISAR" = si ]; then
+  echo "les falta: $FALTAN | ya avisan: $YA | archivados (no aplica): $ARCHIVADOS | fallos: $FALLOS"
+  echo "modo revisar: NO se ha creado ninguno. Para crearlos, lánzalo sin --revisar."
+else
+  echo "creados: $CREADOS | ya estaban: $YA | archivados (no aplica): $ARCHIVADOS | fallos: $FALLOS"
+fi
 # Los fallos salen por código de retorno, no solo por pantalla: si algún día esto corre
 # desatendido, un repo que se quedó mudo tiene que poder detectarse sin leer el texto.
 [ "$FALLOS" -gt 0 ] && exit 1
