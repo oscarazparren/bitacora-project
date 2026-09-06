@@ -24,6 +24,23 @@ el SHA de la punta. El "desde tu última sesión" NO se calcula aquí — eso es
 máquina, que compara este fichero contra su propio marcador local. Este servidor publica
 el estado del mundo, no el estado de nadie.
 
+QUÉ RAMA SE SIGUE — AÑADIDO EL 6-SEP-2026, Y ES UN CAMBIO DE SIGNIFICADO.
+Hasta ese día se guardaba `after` de CUALQUIER push sin mirar nunca `ref`, así que un
+push a una rama de trabajo pisaba el SHA del repo igual que uno a main. Eso le daba dos
+fallos al índice del arranque, que desde ese mismo día compara ese SHA contra el .git del
+clon: un falso "al día" con main por detrás (si tu HEAD estaba en esa rama), y un
+PENDIENTE que ningún `git pull` apaga — que es el peor de los dos, porque el índice ya no
+consume el aviso a propósito y un renglón inapagable enseña a no leer la lista.
+  Ahora solo entra el push a la RAMA POR DEFECTO del repo, que viene en el propio payload
+(`repository.default_branch`); no se fija {main,master} a mano porque eso congelaría la
+fila de cualquier repo cuya rama por defecto sea otra, y una fila congelada se lee igual
+que un dato fresco. Lo demás se responde 200 y se anota en el journal: ignorar en
+silencio es justo el fallo que este proyecto persigue.
+  EL SIGNIFICADO QUE CAMBIA: la 3.ª columna ya no es "cuándo se tocó este repo" sino
+"cuándo se movió su rama por defecto". Es la pregunta que hace el índice.
+  Y se guarda el REF en una columna más, para que el fichero diga de qué rama es cada
+SHA en vez de que haya que saberse esta regla de memoria. Ver actualizar_estado().
+
 ARRANQUE EN FRÍO. Los webhooks solo avisan de pushes FUTUROS, así que estado.txt empieza
 vacío y se va llenando según se toca cada repo. Es deliberado: la alternativa (rellenarlo
 de golpe) exigiría justo el token que se está evitando. Un repo que aún no aparece se
@@ -79,7 +96,22 @@ def firma_valida(cuerpo, cabecera):
     return hmac.compare_digest(esperado, cabecera)
 
 
-def actualizar_estado(repo, sha):
+def refs_que_se_siguen(datos):
+    """Los refs cuyo push actualiza la fila del repo. Pura: entra el payload, sale lista.
+
+    Normalmente uno solo: la rama por defecto que declara el propio payload. El respaldo
+    a {main, master} es para el día que GitHub deje de mandar ese campo — preferimos
+    seguir la rama equivocada en un repo raro antes que dejar de seguir ninguna en todos,
+    que es la avería que no se ve.
+    """
+    repositorio = datos.get("repository") or {}
+    rama = repositorio.get("default_branch") or repositorio.get("master_branch") or ""
+    if rama:
+        return ["refs/heads/" + rama]
+    return ["refs/heads/main", "refs/heads/master"]
+
+
+def actualizar_estado(repo, sha, ref):
     """Reescribe estado.txt entero con el repo actualizado.
 
     Se escribe a temporal y se renombra: os.replace es atómico en el mismo sistema de
@@ -106,13 +138,22 @@ def actualizar_estado(repo, sha):
     except FileNotFoundError:
         pass  # primera vez: se crea abajo
 
-    filas[repo] = [sha, datetime.now(timezone.utc).isoformat(timespec="seconds")]
+    # La fila se sustituye ENTERA, así que un repo que llevaba la marca `sembrado`
+    # (scripts/sembrar-estado.sh) la pierde en cuanto llega su primer push de verdad —
+    # que es justo lo que esa marca quería decir. Las filas que NO se tocan conservan sus
+    # columnas extra tal cual, arriba.
+    filas[repo] = [sha, datetime.now(timezone.utc).isoformat(timespec="seconds"), ref]
 
     destino_dir = os.path.dirname(ESTADO) or "."
     fd, tmp = tempfile.mkstemp(dir=destino_dir, prefix=".estado.", suffix=".tmp")
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
-            f.write("# nombre\tsha\tvisto-utc — lo escribe receptor-webhook.py\n")
+            # Cabecera literal, y la comparte scripts/sembrar-estado.sh: si las dos no
+            # dicen lo mismo, el fichero cambia de cabecera según quién escribió el último.
+            f.write(
+                "# nombre\tsha\tvisto-utc\tref — lo escriben"
+                " receptor-webhook.py y sembrar-estado.sh\n"
+            )
             for nombre in sorted(filas):
                 f.write("\t".join([nombre] + filas[nombre]) + "\n")
         # mkstemp crea con 0600 y os.replace conserva el modo del temporal, así que sin
@@ -166,21 +207,31 @@ class Receptor(BaseHTTPRequestHandler):
             datos = json.loads(cuerpo)
             repo = datos["repository"]["name"]
             sha = datos["after"]
+            ref = datos["ref"]
         except (ValueError, KeyError, TypeError) as e:
             log(f"ERROR payload de push ilegible: {e}")
             return self.responder(400, "payload ilegible")
+
+        # Solo la rama por defecto. Un push a una rama de trabajo NO es la punta del
+        # repo, y guardarlo como si lo fuera es la avería del 6-sep (ver la cabecera).
+        # Se responde 200 —para GitHub la entrega fue bien y no hay nada que reintentar—
+        # pero se deja dicho en el journal cuál se ignoró y cuál se sigue.
+        seguidos = refs_que_se_siguen(datos)
+        if ref not in seguidos:
+            log(f"ignorado {repo} ref={ref or '(vacio)'} (se sigue {seguidos[0]})")
+            return self.responder(200, "ignorado: no es la rama por defecto")
 
         # Un borrado de rama manda after = todo ceros: no es una punta nueva.
         if not sha or set(sha) == {"0"}:
             return self.responder(200, "sin sha")
 
         try:
-            actualizar_estado(repo, sha)
+            actualizar_estado(repo, sha, ref)
         except OSError as e:
             log(f"ERROR no se pudo escribir {ESTADO}: {e}")
             return self.responder(500, "error al guardar")
 
-        log(f"OK {repo} -> {sha[:12]}")
+        log(f"OK {repo} {ref} -> {sha[:12]}")
         return self.responder(200, "ok")
 
     def do_GET(self):

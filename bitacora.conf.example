@@ -94,7 +94,20 @@ BITACORA_FLOTA_REPOS=""
 BITACORA_INDICE_REPOS=""
 
 # Ruta remota, en ese mismo servidor, al estado que mantiene el receptor de webhooks
-# (servidor/receptor-webhook.py): un "nombre<TAB>sha<TAB>fecha" por línea.
+# (servidor/receptor-webhook.py): un "nombre<TAB>sha<TAB>fecha<TAB>ref" por línea.
+#
+# QUÉ SHA ES ESE, y desde el 6-sep-2026 tiene respuesta: el de la RAMA POR DEFECTO del
+# repo, y solo ese. Antes entraba el de cualquier push, así que una rama de trabajo
+# pisaba la punta del repo y el índice del arranque —que compara ese SHA contra el .git
+# del clon— daba un falso "al día" o un PENDIENTE que ningún pull podía apagar. La fecha,
+# por tanto, dice cuándo se movió la rama por defecto, no cuándo se tocó el repo.
+#
+# DE LA 4ª COLUMNA EN ADELANTE son etiquetas y se identifican POR SU VALOR, no por su
+# posición: la que empieza por refs/heads/ es la rama de la que sale el SHA, y `sembrado`
+# (scripts/sembrar-estado.sh) dice que la fila es una foto de arranque y no un push real.
+# Se hizo así porque los dos escritores se despliegan por separado y porque cuando se
+# añadió el ref ya había 24 filas vivas con `sembrado` en esa 4ª columna. Una fila sin
+# ref se compara contra HEAD, main y master, como se hacía antes.
 #
 # ESTE FICHERO ES AHORA LA FUENTE DEL ÍNDICE, y por eso el índice cuesta lo mismo con
 # 10 repos que con 200. Hasta el 29-ago-2026 cada cliente preguntaba a GitHub un

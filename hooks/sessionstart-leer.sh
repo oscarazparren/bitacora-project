@@ -483,7 +483,24 @@ if [ -n "$FLOTA_SSH" ] && [ -n "$INDICE_REPOS" ]; then
         if (es_sha(h)) return h                 # HEAD desprendido
         return ""
       }
-      $1=="E" { est[$2]=$3; next }
+      # DE QUÉ RAMA ES EL SHA (6-sep-2026, tarde). La 4.ª columna en adelante son
+      # ETIQUETAS y se reconocen POR SU VALOR, no por su posición: la 4.ª ya la
+      # ocupaba el literal `sembrado` (24 de las 45 filas ese día) y los dos
+      # escritores --el receptor en el servidor y sembrar-estado.sh desde
+      # cualquiera de los dos PCs-- se despliegan por separado, así que la
+      # posición no es un contrato que se pueda sostener. La que empieza por
+      # refs/heads/ dice de qué rama es el SHA; el resto son marcas de origen.
+      #   Solo refs/heads/: aceptar un refs/remotes/... por esta puerta
+      # reintroduciría el fetch-sin-merge que esta sección viene a matar. Y sin
+      # `..`: el valor llega por la red y leer1() lee ficheros a pelo, así que
+      # "refs/heads/../../loquesea" leería FUERA del .git. Un nombre de rama de
+      # git nunca lleva `..`, y el cerrojo cuesta una comparación.
+      $1=="E" {
+        est[$2]=$3
+        for (k = 5; k <= NF; k++)
+          if ($k ~ /^refs\/heads\/./ && $k !~ /\.\./) { refsrv[$2]=$k; break }
+        next
+      }
       $1=="R" { r=$0; sub(/^R[ \t]+[^ \t]+[ \t]+/, "", r); rutas[$2]=r; next }
       $1!="L" { next }
       NF<2 || $2 ~ /^#/ { next }
@@ -512,9 +529,16 @@ if [ -n "$FLOTA_SSH" ] && [ -n "$INDICE_REPOS" ]; then
           h  = cabeza(gd, base)
           m1 = refsha(gd, base, "refs/heads/main")
           m2 = refsha(gd, base, "refs/heads/master")
-          # Tres estados, nunca colapsados: "no se pudo leer" NO es "al día".
-          if (h == "" && m1 == "" && m2 == "") { print "NOSESABE\t" n "\t" p; continue }
-          if (est[n] == h || est[n] == m1 || est[n] == m2) print "ALDIA\t" n
+          # La rama que dice el servidor AMPLÍA los candidatos, no los sustituye:
+          # nunca convierte un AL DÍA en PENDIENTE. Hoy es redundante en los 45
+          # repos de la cuenta (41 main y 4 master, contados el 6-sep); está para
+          # que un repo cuya rama por defecto sea otra no acabe en un PENDIENTE
+          # perpetuo, que es un aviso que nadie puede apagar.
+          rs = ""
+          if (n in refsrv) rs = refsha(gd, base, refsrv[n])
+          # Cuatro estados, nunca colapsados: "no se pudo leer" NO es "al día".
+          if (h == "" && m1 == "" && m2 == "" && rs == "") { print "NOSESABE\t" n "\t" p; continue }
+          if (est[n] == h || est[n] == m1 || est[n] == m2 || est[n] == rs) print "ALDIA\t" n
           else print "PENDIENTE\t" n "\t" p
         }
       }

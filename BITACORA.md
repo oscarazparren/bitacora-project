@@ -11,6 +11,152 @@ Formato: `## AAAA-MM-DD — [dispositivo] titular`
 
 ---
 
+## 2026-09-06 — [PC Nuevo] El servidor guardaba el push de cualquier rama como si fuera la punta del repo: ahora solo entra la rama por defecto, y el fichero dice de cuál es cada SHA
+
+Cierra el primer punto de «queda abierto» de la entrada de esta misma mañana, que es el
+que ella misma marcaba como el más urgente. Lo de abajo es la misma avería vista desde los
+dos lados: **el servidor no miraba `ref`, y el cliente suponía que el SHA era de `main`.**
+
+### 1. El fallo: un push a una rama de trabajo pisaba la punta del repo
+
+`servidor/receptor-webhook.py` leía `datos["after"]` de cualquier push y **nunca**
+`datos["ref"]`. Daba igual a qué rama empujaras: la fila del repo en `estado.txt` se
+reescribía con ese SHA. Mientras el índice comparaba contra un marcador eso casi no se
+notaba; desde esta mañana compara contra el `.git` del clon, y entonces salen dos cosas:
+
+- **Falso «al día».** Si tu HEAD está en esa misma rama de trabajo, el SHA del servidor
+  coincide con tu HEAD y el repo sale al día **con `main` por detrás**.
+- **Un PENDIENTE que ningún `git pull` apaga.** Si la rama la empujó la otra máquina, ese
+  SHA no está en tu HEAD, ni en tu `main`, ni en tu `master`, y no hay pull que lo lleve
+  ahí. **Este es el peor de los dos**, y no por el aviso perdido: el diseño de esta mañana
+  ya no consume el aviso a propósito, así que ese renglón sale en **cada** arranque para
+  siempre. Un aviso inapagable enseña a no leer la lista entera — que es lo que la entrada
+  de arriba dice de los avisos permanentes, entrando por la otra puerta.
+
+### 2. La decisión: filtrar en el servidor, y que el fichero lo diga
+
+La tarea proponía guardar el ref en una 4.ª columna y, como mínimo aceptable, ignorar los
+pushes cuyo ref no fuera `refs/heads/{main,master}`. Se ha hecho **lo primero y lo segundo,
+y ninguno de los dos exactamente como venía escrito**. Los tres cambios respecto a la
+propuesta salen de mirar los datos, no de opinar:
+
+- **La 4.ª columna ya estaba ocupada.** `scripts/sembrar-estado.sh` escribe ahí el literal
+  `sembrado` desde el 1-sep, y en el `estado.txt` vivo eran **24 de 45 filas**. Así que las
+  columnas extra pasan a identificarse **por su valor y no por su posición**: la que
+  empieza por `refs/heads/` es el ref, y el resto son marcas de origen. Eso además quita el
+  problema de fondo: los dos escritores —el receptor, en el servidor, y el sembrador, desde
+  cualquiera de los dos PCs— **se despliegan por separado**, así que un acuerdo posicional
+  entre ellos no hay quien lo sostenga. Con esto no hay nada que migrar y las filas viejas
+  siguen valiendo tal cual.
+- **`{main,master}` fijos no valen.** El payload de push trae `repository.default_branch`
+  —**comprobado sobre una entrega real**, con `gh api` sobre las deliveries del hook, no
+  sacado de la documentación—, y filtrar por él acierta en cualquier repo. Con la lista
+  fija, un repo cuya rama por defecto fuera otra **no volvería a actualizar su fila jamás**,
+  y una fila congelada se lee exactamente igual que un dato fresco: el mismo modo de fallo
+  que este proyecto lleva un mes persiguiendo. Queda `{main,master}` como respaldo por si
+  GitHub dejara de mandar el campo.
+- **El ref AMPLÍA la comparación, no la sustituye.** El `awk` sigue aceptando HEAD, `main`
+  y `master`, y añade la rama que nombre el servidor. Nunca convierte un AL DÍA en
+  PENDIENTE. Hoy es **redundante en los 45 repos de la cuenta** (41 `main`, 4 `master`,
+  contados con GraphQL); está para que el día que aparezca uno con otra rama no se quede en
+  un PENDIENTE perpetuo. La parte que arregla algo hoy es la del servidor.
+
+**Lo que cambia de significado, y hay que decirlo:** la 3.ª columna ya no es «cuándo se
+tocó este repo» sino «cuándo se movió su rama por defecto». Es la pregunta que hace el
+índice. Nadie más lee esa columna: comprobado, el `awk` usa `$2` y `$3`, y el sembrador
+`cut -f1`.
+
+### 3. Dos cerrojos que no venían en la propuesta
+
+El valor del ref llega **por la red**, y el `awk` lo usa para componer una ruta que luego
+lee a pelo con `getline`. Dos cosas quedan cerradas por la forma del valor:
+
+- **Solo `refs/heads/`.** Aceptar un `refs/remotes/origin/main` por esa puerta
+  reintroduciría el fetch-sin-merge que la sección entera viene a matar: el mismo fallo que
+  ya estaba prohibido para lo que se lee del `.git`, prohibido también para lo que llegue
+  de fuera.
+- **Sin `..`.** Un `refs/heads/../../../trampa` sale del `.git` y lee cualquier fichero; si
+  al otro lado hay 40 hex, es un AL DÍA fabricado. Un nombre de rama de git nunca lleva
+  `..`. Hoy hace falta una firma HMAC válida para llegar hasta ahí, así que no es una
+  puerta abierta: es que el cerrojo cuesta una comparación.
+
+### 4. Los bancos, y que muerden
+
+`scripts/probar-indice-clon.sh` pasa de 22 casos a **34**, y el receptor **estrena banco**:
+`scripts/probar-receptor-ref.sh`, 28 casos. Ese era el agujero grande — el clasificador del
+cliente tenía banco desde esta mañana y **la pieza que se despliega a un servidor no tenía
+ninguno**, que es justo donde un fallo no se ve: no hay pantalla, el journal no lo lee
+nadie, y el síntoma sale días después y en otra máquina.
+
+No prueba una copia de sus funciones: **arranca el receptor de verdad** en un puerto libre,
+con su estado y su secreto en un temporal, y le habla por HTTP con firmas HMAC como las de
+GitHub.
+
+Comprobado que muerden, deshaciendo cada cosa en una copia:
+
+| Lo que se deshace | Cuántos casos fallan |
+|---|---|
+| el filtro por rama (o sea, el receptor de ayer) | **11** |
+| filtrar por `{main,master}` fijos en vez de por el payload | 4 |
+| no guardar el ref | 5 |
+| aceptar cualquier `refs/` y no solo `refs/heads/` | 3 |
+| quitar el cerrojo del `..` | 1 |
+
+Y uno de los casos nuevos **pasaba por el motivo equivocado**: el ref con `..` que escribí
+para probar el escape usaba `../../trampa`, que desde `refs/heads/` cae dentro de `.git` y
+no en la raíz del repo. Con el cerrojo y sin él daba lo mismo, o sea que no probaba nada;
+hacen falta tres niveles. Se vio al comprobar que mordía, no al escribirlo: **un caso que
+pasa no es un caso que prueba**.
+
+El caso 11 del banco nuevo es de otro tipo y merece nombre propio: compara la cabecera que
+escribe el receptor con **la que escribe el sembrador, sacada de su propio `printf`**. Los
+dos reescriben el fichero entero; si dejan de decir lo mismo, la cabecera cambia según
+quién escribió el último. Nada más ponerlo falló — y tenía razón.
+
+### 5. Comprobado, no deducido
+
+- Los 45 repos de la cuenta tienen rama por defecto `main` (41) o `master` (4). Ninguno
+  otra: por eso el efecto visible de hoy es **cero** y el arreglo es para lo que todavía no
+  ha pasado.
+- El `estado.txt` vivo tenía 46 filas, 24 de ellas con la marca `sembrado`.
+- El payload real de una entrega trae `ref`, `repository.default_branch` y
+  `repository.master_branch`.
+- El hook entero, de punta a punta con `$VISTO` y `$LEIDO` desviados: 24 s y salida
+  idéntica a la de antes, con los mismos 9 descuadrados. Era lo que tenía que pasar: sin
+  ref en el fichero, el `awk` compara como comparaba.
+- El fichero del servidor era **idéntico bit a bit al de git** antes de tocarlo
+  (`fdc54350…`), o sea que no había ningún parche a mano que pisar.
+- `sembrar-estado.sh --revisar` contra el servidor real después del cambio: sigue leyendo,
+  sigue contando bien, y no hay nada que sembrar.
+
+### 6. El despliegue quedó a medias, y no por un fallo
+
+El receptor nuevo está **subido y comprobado en el servidor**:
+`/opt/bitacora/receptor-webhook.py.nuevo`, md5 `e292f880…` idéntico al local, y compila con
+el python3 de allí. La copia de seguridad del anterior está en
+`/opt/bitacora/receptor-webhook.py.bak-20260906`.
+
+**El `mv` y el `systemctl restart` los tiene que lanzar Oscar**: el clasificador de
+permisos de esta sesión bloquea escribir ficheros y reiniciar servicios en la máquina
+remota. No es un error a depurar, es la barandilla haciendo su trabajo. Se anota porque
+**hasta que eso se ejecute sigue corriendo el receptor viejo, y el fallo de arriba sigue
+vivo**.
+
+Mientras tanto no hay nada a medias: el cliente nuevo lee sin problema las filas sin ref
+(comprobado con el hook entero), y el receptor viejo escribe filas que el cliente nuevo
+entiende. Los dos lados son compatibles en las dos direcciones, que es justo lo que
+permitía desplegarlos por separado.
+
+### La lección
+
+La propuesta que traía la tarea era buena y aun así **tres de sus cuatro detalles cambiaron
+al mirar los datos**: la columna que proponía estaba ocupada, la lista de ramas que
+proponía fijar venía ya en el payload, y el sitio donde proponía comparar no era donde
+estaba el fallo. Ninguna de las tres se ve razonando; las tres se ven abriendo el fichero,
+la entrega y la cuenta. Es la misma lección que dejó escrita el PC viejo esta madrugada
+—«el fallo no fue de razonamiento sino de no mirar el artefacto»— aplicada esta vez
+**antes** de escribir el código en vez de después.
+
 ## 2026-09-06 — [PC Nuevo] El índice de arranque dejaba de avisar en cuanto avisaba una vez: ahora mira el clon, no el marcador de «ya te lo dije» — y el arreglo traía dentro el mismo fallo
 
 Lo encontró Oscar, y lo encontró de la peor manera posible: el arranque decía «sin

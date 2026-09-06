@@ -205,7 +205,92 @@ espera "15a el separador es TAB, no espacio" "PENDIENTE${TAB}detras${TAB}$R/repo
 espera "15b y los consumidores lo parten bien" "$R/repos/detras" \
   "$(printf '%s\n' "$O" | awk -F'\t' '$1=="PENDIENTE" {print $3}')"
 
-# --- 16. coste: ni un proceso por repo ---------------------------------------
+# ============================================================================
+# LA COLUMNA DEL REF (6-sep-2026, tarde)
+# ============================================================================
+# Hasta hoy el receptor guardaba el SHA de CUALQUIER push y nunca miraba
+# datos["ref"], así que un push a una rama de trabajo pisaba el SHA del repo
+# igual que uno a main. Con la comparación contra el clon eso da dos fallos: un
+# falso "al día" (si tu HEAD está en esa rama) y, peor, un PENDIENTE que ningún
+# `git pull` apaga -- y un renglón inapagable enseña a no leer la lista.
+#
+# El arreglo de verdad está en el servidor (solo entra el push a la rama por
+# defecto). Lo que se prueba AQUÍ es la otra mitad: que el cliente sepa DE QUÉ
+# RAMA es el SHA que le dan, en vez de suponer que es main o master.
+#
+# EL CONTRATO, y es raro a propósito: las columnas extra se identifican POR SU
+# VALOR, no por su posición. La 4.ª ya la ocupaba el literal 'sembrado' en 24
+# filas vivas cuando esto se escribió, y los dos escritores (el receptor en el
+# servidor, sembrar-estado.sh desde cualquiera de los dos PCs) se despliegan por
+# separado. La que empieza por refs/heads/ es el ref; lo demás son etiquetas.
+
+# --- 16. rama por defecto que no es main ni master ---------------------------
+# El caso que la columna existe para arreglar. Repo cuya rama por defecto es
+# `trunk`, con una rama de trabajo encima: no hay main ni master locales, así
+# que sin el ref no hay con qué comparar y el repo se queda en un PENDIENTE
+# perpetuo que ningún pull apaga.
+S16=$(crear "$R/repos/trunkrepo")
+git -C "$R/repos/trunkrepo" branch -m trunk
+git -C "$R/repos/trunkrepo" checkout -q -b faena
+git -C "$R/repos/trunkrepo" commit -q --allow-empty -m "en la faena"
+O=$(printf 'E trunkrepo %s 2026-09-06T12:00:00+00:00\nL trunkrepo\n' "$S16" | clasifica)
+espera "16a sin ref: rama por defecto rara -> PENDIENTE inapagable" \
+  "PENDIENTE${TAB}trunkrepo${TAB}$R/repos/trunkrepo" "$O"
+O=$(printf 'E trunkrepo %s 2026-09-06T12:00:00+00:00 refs/heads/trunk\nL trunkrepo\n' "$S16" | clasifica)
+espera "16b con ref: se compara contra la rama que dice el servidor -> AL DÍA" \
+  "ALDIA${TAB}trunkrepo" "$O"
+
+# --- 17. el ref NO puede fabricar un "al día" --------------------------------
+# La ampliación es un candidato más, no una barra libre: si la rama que nombra
+# el servidor está por detrás en el clon, sigue siendo PENDIENTE.
+O=$(printf 'E trunkrepo 2222222222222222222222222222222222222222 2026-09-06T12:00:00+00:00 refs/heads/trunk\nL trunkrepo\n' | clasifica)
+espera "17a ref conocido pero SHA que no está -> PENDIENTE" \
+  "PENDIENTE${TAB}trunkrepo${TAB}$R/repos/trunkrepo" "$O"
+espera_no "17b y no cuela un AL DÍA" "ALDIA" "$O"
+
+# --- 18. 'sembrado' en la 4.ª columna NO es un ref ---------------------------
+# 24 de las 45 filas vivas tenían esa marca cuando esto se escribió. Un lector
+# que leyera la 4.ª columna a ciegas la tomaría por un nombre de rama.
+S18=$(crear "$R/repos/consembrado")
+O=$(printf 'E consembrado %s 2026-09-01T21:08:54+00:00 sembrado\nL consembrado\n' "$S18" | clasifica)
+espera "18a fila sembrada al día -> AL DÍA (main, como siempre)" "ALDIA${TAB}consembrado" "$O"
+O=$(printf 'E consembrado 1111111111111111111111111111111111111111 2026-09-01T21:08:54+00:00 sembrado\nL consembrado\n' | clasifica)
+espera "18b fila sembrada por detrás -> PENDIENTE" \
+  "PENDIENTE${TAB}consembrado${TAB}$R/repos/consembrado" "$O"
+
+# --- 19. las dos marcas a la vez (el formato que siembra desde hoy) ----------
+O=$(printf 'E trunkrepo %s 2026-09-06T12:00:00+00:00 refs/heads/trunk sembrado\nL trunkrepo\n' "$S16" | clasifica)
+espera "19a ref y la marca juntos: manda el valor, no la posición" "ALDIA${TAB}trunkrepo" "$O"
+O=$(printf 'E trunkrepo %s 2026-09-06T12:00:00+00:00 sembrado refs/heads/trunk\nL trunkrepo\n' "$S16" | clasifica)
+espera "19b y en el orden contrario, igual" "ALDIA${TAB}trunkrepo" "$O"
+
+# --- 20. solo refs/heads/: un ref REMOTO en la columna no vale --------------
+# Aceptar refs/remotes/origin/* reintroduce el fallo entero: un fetch sin merge
+# los deja al día con el árbol por detrás. Vale para lo que el awk lee del .git
+# y vale también para lo que le manden por la columna.
+O=$(printf 'E fetchado %s 2026-09-06T12:00:00+00:00 refs/remotes/origin/main\nL fetchado\n' "$S6" | clasifica)
+espera "20a ref remoto en la columna -> PENDIENTE" \
+  "PENDIENTE${TAB}fetchado${TAB}$R/repos/fetchado" "$O"
+espera_no "20b y nunca AL DÍA" "ALDIA" "$O"
+
+# --- 21. ref que no existe en el clon y nada más que leer -> NO SE SABE ------
+# La guarda de "no se pudo leer no es al día" tiene que cubrir también el ref.
+O=$(printf 'E roto 1111111111111111111111111111111111111111 2026-09-06T12:00:00+00:00 refs/heads/main\nL roto\n' | clasifica)
+espera "21  ref dado, .git sin refs -> NO SE SABE" "NOSESABE${TAB}roto${TAB}$R/repos/roto" "$O"
+
+# --- 22. el ref no puede sacar la lectura de su .git -------------------------
+# El valor llega por la red. Un ref con '..' compone una ruta hacia arriba, y
+# leer1() lee ficheros a pelo: si al otro lado hay 40 hex, sale un AL DÍA
+# fabricado. Un nombre de rama de git nunca lleva '..', así que se descarta por
+# la forma. Hoy hace falta una firma HMAC válida para llegar hasta aquí; el
+# cerrojo cuesta una comparación.
+S22=$(crear "$R/repos/escape")
+printf '%s\n' "$S22" > "$R/repos/escape/trampa"
+git -C "$R/repos/escape" commit -q --allow-empty -m "el clon avanza"
+O=$(printf 'E escape %s 2026-09-06T12:00:00+00:00 refs/heads/../../../trampa\nL escape\n' "$S22" | clasifica)
+espera_no "22  ref con .. no lee fuera del .git" "ALDIA" "$O"
+
+# --- 23. coste: ni un proceso por repo ---------------------------------------
 # La sección 0 se reescribió una vez porque costaba 41 s con 40 repos lanzando
 # dos awk por repo. Aquí se comprueba que sigue siendo UNA pasada.
 { printf 'E aldia %s\n' "$S1"; for i in $(seq 1 60); do printf 'L aldia\n'; done; } > "$TMP/muchos"
@@ -213,9 +298,9 @@ INI=$(date +%s)
 awk -v home="$R" -f "$TMP/indice.awk" "$TMP/muchos" > /dev/null
 SEGS=$(( $(date +%s) - INI ))
 if [ "$SEGS" -le 5 ]; then
-  printf '  ok    16 60 repos en %ss (una sola pasada de awk)\n' "$SEGS"; PASA=$((PASA + 1))
+  printf '  ok    23 60 repos en %ss (una sola pasada de awk)\n' "$SEGS"; PASA=$((PASA + 1))
 else
-  printf '  FALLA 16 60 repos tardaron %ss: eso huele a un proceso por repo\n' "$SEGS"
+  printf '  FALLA 23 60 repos tardaron %ss: eso huele a un proceso por repo\n' "$SEGS"
   FALLA=$((FALLA + 1))
 fi
 

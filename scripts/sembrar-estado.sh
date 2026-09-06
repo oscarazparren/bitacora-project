@@ -89,10 +89,10 @@ query($login:String!, $endCursor:String) {
   repositoryOwner(login:$login) {
     repositories(first:100, after:$endCursor, ownerAffiliations:OWNER) {
       pageInfo { hasNextPage endCursor }
-      nodes { name defaultBranchRef { target { oid } } }
+      nodes { name defaultBranchRef { name target { oid } } }
     }
   }
-}' --jq '.data.repositoryOwner.repositories.nodes[] | select(.defaultBranchRef != null) | [.name, .defaultBranchRef.target.oid] | @tsv' > "$TMP/github" 2>"$TMP/gh.err"
+}' --jq '.data.repositoryOwner.repositories.nodes[] | select(.defaultBranchRef != null) | [.name, .defaultBranchRef.target.oid, .defaultBranchRef.name] | @tsv' > "$TMP/github" 2>"$TMP/gh.err"
 [ -s "$TMP/github" ] || {
   echo "ERROR: GitHub no devolvió repos -> $(head -c 200 "$TMP/gh.err" | tr '\n' ' ')" >&2
   exit 1
@@ -101,13 +101,19 @@ echo "  GitHub: $(wc -l < "$TMP/github") repos con rama por defecto"
 
 # ---------- 3. Qué se añade ----------
 AHORA=$(date -u '+%Y-%m-%dT%H:%M:%S+00:00')
-# La 4ª columna marca de dónde salió la fila. No estorba: el cliente solo lee nombre y
-# SHA, y el receptor conserva las columnas extra tal cual — así que la marca desaparece
-# sola en cuanto ese repo reciba su primer push de verdad. Sirve para saber, mirando el
-# fichero, qué es dato real y qué es foto de arranque.
+# LAS COLUMNAS EXTRA SE IDENTIFICAN POR SU VALOR, NO POR SU POSICIÓN, y por eso aquí
+# salen dos: la que empieza por refs/heads/ dice de qué rama es el SHA (la misma que
+# escribe el receptor desde el 6-sep-2026) y `sembrado` dice que esto es una foto de
+# arranque y no un push real. El orden no significa nada: cuando esto se escribió había
+# 24 filas vivas con `sembrado` ya en la 4ª columna, y los dos escritores —el receptor,
+# en el servidor, y este script, desde cualquiera de los dos PCs— se despliegan por
+# separado, así que la posición no es un contrato que nadie pueda sostener.
+#   La marca desaparece sola en cuanto ese repo reciba su primer push de verdad: el
+# receptor sustituye la fila entera (las que NO toca las conserva tal cual). Sirve para
+# saber, mirando el fichero, qué es dato real y qué es foto de arranque.
 awk -F'\t' -v ahora="$AHORA" '
   NR==FNR { ya[$1]=1; next }
-  !($1 in ya) { print $1 "\t" $2 "\t" ahora "\tsembrado" }
+  !($1 in ya) { print $1 "\t" $2 "\t" ahora "\trefs/heads/" $3 "\tsembrado" }
 ' "$TMP/con-datos" "$TMP/github" | sort > "$TMP/nuevas"
 
 NUEVAS=$(wc -l < "$TMP/nuevas")
@@ -146,7 +152,7 @@ fi
 # ve el fichero entero viejo o el entero nuevo, nunca uno a medias -- igual que hace
 # receptor-webhook.py con os.replace.
 {
-  printf '# nombre\tsha\tvisto-utc — lo escribe receptor-webhook.py\n'
+  printf '# nombre\tsha\tvisto-utc\tref — lo escriben receptor-webhook.py y sembrar-estado.sh\n'
   { grep -v '^#' "$TMP/estado.viejo" | grep -v '^$'; cat "$TMP/nuevas"; } | sort
 } > "$TMP/estado.nuevo"
 
