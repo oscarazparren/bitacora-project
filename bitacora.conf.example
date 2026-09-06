@@ -153,6 +153,12 @@ BITACORA_PRESUPUESTO=25
 # Dónde guarda ESTA máquina lo último que vio de cada repo vigilado, y el mapa
 # opcional de repo -> carpeta local (nombre<TAB>ruta) para cuando el nombre de la
 # carpeta no coincide con el del repo. No suelen tocarse.
+#
+# OJO con VISTO, que cambió de papel el 6-sep-2026: es un REGISTRO (qué SHA tenía el
+# servidor y cuándo se le preguntó), no el criterio del índice. El índice compara contra
+# el .git del clon. Comparar contra este fichero es lo que hacía que un repo por detrás
+# saliera una vez y luego callara para siempre; si vuelves a verlo usado para decidir, es
+# esa avería otra vez. RUTAS sí lo lee el índice: es lo que le dice dónde está el clon.
 BITACORA_VISTO="$HOME/.claude/bitacora-visto"
 BITACORA_RUTAS="$HOME/.claude/bitacora-rutas"
 

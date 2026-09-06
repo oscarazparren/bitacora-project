@@ -158,7 +158,7 @@ fi
 # Claude Code mata el hook al llegar a su timeout (45 s en settings.json) y DESCARTA
 # la salida ENTERA, sin avisar ni al usuario ni al agente. Cada llamada de red de aquí
 # abajo tenía ya su propio timeout, pero la SUMA no tenía ninguno, y esa suma no está
-# acotada: el 'git fetch' de la sección 0 corre una vez por repo CAMBIADO, en serie.
+# acotada: el 'git fetch' que la sección 0 hacía ENTONCES corría una vez por repo, en serie.
 # O sea que cuanto más trabajo hay que contar, más probable es morir antes de contarlo
 # — el fallo empeora justo cuando más falta hace.
 #
@@ -340,19 +340,6 @@ entradas_recientes() {
   ENTRADAS_OMITIDAS=$((ENTRADAS_TOTAL - incluidas))
 }
 
-# Dónde está clonado un repo en ESTA máquina. Primero $RUTAS (nombre<TAB>ruta, para
-# cuando la carpeta local no se llama igual que el repo), luego dos sitios obvios.
-ruta_local() {
-  local nombre="$1" r
-  if [ -f "$RUTAS" ]; then
-    r=$(awk -v n="$nombre" '$1==n {sub($1"[ \t]+",""); print; exit}' "$RUTAS")
-    [ -n "$r" ] && [ -d "$r/.git" ] && { echo "$r"; return; }
-  fi
-  for r in "$HOME/$nombre" "$HOME/repos/$nombre" "$HOME/Desktop/$nombre"; do
-    [ -d "$r/.git" ] && { echo "$r"; return; }
-  done
-}
-
 # ¿Este repo se cubre con la bitácora de flota en vez de con la suya propia?
 usa_flota() {
   [ -z "$FLOTA_SSH" ] && return 1
@@ -369,190 +356,264 @@ usa_flota() {
 }
 
 # ---------- 0. Índice de cambios ----------
-# Contesta UNA pregunta y solo una: ¿en qué repos vigilados se ha movido algo desde la
-# última vez que esta máquina miró? Nombres. No cuántos commits, no si tocaron la
-# bitácora. Si vas a trabajar en uno de ellos, entras y lo lees allí, que es donde está
-# el porqué. Diseño de Oscar, 29-ago-2026, y es el que hace barato todo esto.
+# Contesta UNA pregunta y solo una: ¿qué repos vigilados NO están, EN ESTA MÁQUINA, en la
+# punta que el servidor vio? Nombre y ruta. No cuántos commits, no en qué dirección, no
+# si tocaron la bitácora. Si vas a trabajar en uno de ellos, entras y lo miras allí, que
+# es donde está el porqué. Diseño de Oscar, 29-ago-2026, y es el que hace barato esto.
 #
-# CÓMO ERA HASTA HOY. Se preguntaba a GitHub UNA VEZ POR REPO (git ls-remote) y, para
-# los que habían cambiado, se hacía además un git fetch para contar commits. Medido:
-# ~4s por repo en Windows, coste LINEAL. 45s con 10 repos, ~160s con 40 -- o sea que
-# ampliar el catálogo rompía el arranque, y el 29-ago lo rompió de verdad.
+# CÓMO ERA EN AGOSTO. Se preguntaba a GitHub UNA VEZ POR REPO (git ls-remote) y, para los
+# que habían cambiado, se hacía además un git fetch para contar commits. Medido: ~4s por
+# repo en Windows, coste LINEAL. 45s con 10 repos, ~160s con 40 -- o sea que ampliar el
+# catálogo rompía el arranque, y el 29-ago lo rompió de verdad.
 #
-# CÓMO ES AHORA. El trabajo lo hace el servidor: los webhooks de GitHub le avisan de
-# cada push y mantiene estado.txt (nombre -> SHA). Aquí se lee ese fichero en UNA
-# llamada y se compara con el marcador local. Coste CONSTANTE: igual con 10 que con 200.
-# No queda ni una llamada a git en esta sección; el detalle caro se eliminó a propósito.
-VISTO_ANTES=""
+# CÓMO ES AHORA. El trabajo lo hace el servidor: los webhooks de GitHub le avisan de cada
+# push y mantiene estado.txt (nombre -> SHA). Aquí se lee ese fichero en UNA llamada.
+# Coste CONSTANTE: igual con 10 que con 200.
+#
+# CONTRA QUÉ SE COMPARA -- CAMBIADO EL 6-SEP-2026, Y ES EL CORAZÓN DE ESTA SECCIÓN.
+# Hasta ese día el estado del servidor se comparaba contra $VISTO, el marcador de "esto
+# ya te lo enseñé", que esta misma sección reescribe al final de cada arranque. Eso hace
+# del índice un aviso de UNA SOLA VEZ: te dice que un repo se ha movido, tú no haces el
+# pull, y en la sesión siguiente el marcador ya coincide con el servidor -- así que el
+# índice calla PARA SIEMPRE con el clon por detrás. No es una hipótesis: el 6-sep-2026,
+# en el PC Nuevo, $VISTO tenía bitacora-project en 88b1d6d2 (la punta de origin/main) y
+# el arranque dijo "sin movimiento en ninguno de los 43 repos vigilados" con el clon 12
+# commits por detrás; dentro venía scripts/coste-sesiones.py, que llevaba dos días sin
+# llegar a esa máquina.
+#   Ahora se compara contra EL CLON: los SHA que hay en su .git. Eso es un ESTADO, no una
+# novedad, y por tanto no se puede gastar enseñándolo: vuelve a salir en cada arranque
+# hasta que cuadre de verdad. Al cambiarlo aparecieron 9 de 43 repos descuadrados y mudos.
+#
+# $VISTO SE SIGUE ESCRIBIENDO, pero ya no decide nada: queda como registro de qué SHA
+# tenía el servidor y cuándo se le preguntó -- que es, de hecho, lo que permitió
+# diagnosticar esto. Si vuelve a aparecer una comparación contra él, es la avería otra vez.
+#
+# QUÉ CUENTA COMO "AL DÍA": que el SHA del servidor sea HEAD, refs/heads/main o
+# refs/heads/master. Comparar solo contra HEAD daría un falso positivo permanente en
+# cuanto haya una rama de trabajo abierta (ECC estaba en fix/dead-badrudi-video-link con
+# main exactamente en la punta). Los refs REMOTOS -- refs/remotes/origin/* -- NO cuentan,
+# y es a propósito: un fetch sin merge los deja al día mientras el árbol sigue por detrás,
+# que es exactamente el fallo que esto arregla (AlcoholTax-IA estaba así el 6-sep).
+#
+# NO SE DICE LA DIRECCIÓN. Distinguir "por detrás" de "sin subir" necesita git, y git aquí
+# cuesta un proceso por repo (~0,4 s en Windows: ~17 s con 43, sobre un presupuesto de
+# 25). "No coincide" cubre las dos, y las dos piden lo mismo: ir y mirar. Medido el
+# 6-sep: de los 9 descuadrados, 8 por detrás y 1 (AlcoholTax-IA) con un commit sin subir.
+#
+# Y NO SE LANZA NI UN PROCESO, que es la restricción que ya obligó a reescribir esto una
+# vez: la versión con un bucle de shell y dos awk POR REPO costaba 41 s con 40 repos. Los
+# refs se leen como FICHEROS desde el mismo awk que ya recorría la lista -- .git/HEAD, el
+# ref suelto, y packed-refs si el suelto no está (no es un caso raro: ECC tiene TODOS los
+# refs empaquetados). Medido con 43 repos reales: 0,15 s, y el resultado coincide repo a
+# repo con lo que dice git.
 if [ -n "$FLOTA_SSH" ] && [ -n "$INDICE_REPOS" ]; then
   ESTADO_REMOTO="${BITACORA_ESTADO_REMOTO:-/opt/bitacora/estado/estado.txt}"
   DATOS=""
   if hay_tiempo 8; then
     # Los dos ficheros en UNA sola conexión: la lista de vigilados y el estado que
     # mantienen los webhooks. Se separan por una marca y se parten aquí.
-    DATOS=$(timeout "$(tope 12)" ssh -o ConnectTimeout=5 -o BatchMode=yes "$FLOTA_SSH"       "cat '$INDICE_REPOS'; echo '###ESTADO###'; cat '$ESTADO_REMOTO' 2>/dev/null" 2>/dev/null || true)
+    DATOS=$(timeout "$(tope 12)" ssh -o ConnectTimeout=5 -o BatchMode=yes "$FLOTA_SSH"       "cat '$INDICE_REPOS'; echo '###ESTADO###'; cat '$ESTADO_REMOTO' 2>/dev/null; echo '###FIN###'" 2>/dev/null || true)
     [ -z "$DATOS" ] && saltado "índice de cambios: el servidor de flota no respondió a tiempo"
+    # MARCA DE FIN. El ssh de arriba lleva `timeout` y `|| true`, así que una lectura
+    # cortada a medias llega aquí indistinguible de una completa. Y no es un detalle
+    # teórico: si el corte cae dentro de la última línea de estado.txt, ese repo llega
+    # con el SHA VACÍO, y una comparación contra vacío es justo por donde se cuela un
+    # falso "al día". Con la marca se sabe, y se dice.
+    COMPLETO=si
+    [ -n "$DATOS" ] && { printf '%s' "$DATOS" | grep -q '^###FIN###$' || COMPLETO=no; }
   else
     saltado "índice de cambios: sin presupuesto de tiempo para consultarlo"
   fi
 
   if [ -n "$DATOS" ]; then
-    # Snapshot del marcador ANTES de pisarlo: la sección 1 necesita la fecha de la
-    # última visita a SU repo, y para entonces ya estaría sobreescrito.
-    VISTO_ANTES="$HOME/.claude/.bitacora-visto-antes-de-esta-sesion"
-    if [ -f "$VISTO" ]; then cp "$VISTO" "$VISTO_ANTES"; else rm -f "$VISTO_ANTES" 2>/dev/null; fi
-
     TMPD=$(mktemp -d 2>/dev/null || { mkdir -p "/tmp/bitacora.$$"; echo "/tmp/bitacora.$$"; })
 
-    PRIMERA=no
-    [ -f "$VISTO" ] || PRIMERA=si
-
     # TODO en un fichero, con una letra por delante que dice de dónde sale cada línea:
-    # E=estado del servidor, V=lo que vi la última vez, L=lista de vigilados.
+    # E=estado del servidor, R=dónde está clonado cada repo aquí, L=lista de vigilados.
+    # $VISTO ya no entra: se escribe al final, pero no participa en la comparación.
     { printf '%s
-' "$DATOS" | sed -n '/^###ESTADO###$/,$p' | sed '1d' | sed 's/^/E /'
-      [ -f "$VISTO" ] && sed 's/^/V /' "$VISTO"
+' "$DATOS" | sed -n '/^###ESTADO###$/,$p' | sed -e '1d' -e '/^###FIN###$/d' | sed 's/^/E /'
+      [ -f "$RUTAS" ] && sed 's/^/R /' "$RUTAS"
       printf '%s
 ' "$DATOS" | sed -n '1,/^###ESTADO###$/p' | sed '$d' | sed 's/^/L /'
     } > "$TMPD/todo" 2>/dev/null
 
-    # UNA sola pasada de awk. La versión anterior de esto era un bucle de shell con dos
-    # awk POR REPO: 80 procesos con 40 repos. En Git Bash sobre Windows crear un proceso
-    # cuesta ~0,4s, así que eran ~32s -- exactamente el mismo peaje de proceso que hacía
-    # lenta la versión con ls-remote. Se puede cambiar la red por subprocesos y no haber
-    # arreglado nada; pasó, y se midió (41s). El coste tiene que ser CONSTANTE en el
-    # número de repos, no solo dejar de tocar la red.
-    awk -v primera="$PRIMERA" '
+    # UNA sola pasada de awk, y dentro de ella TAMBIÉN la lectura de los refs locales.
+    # getline sobre un fichero es la prueba de existencia y la lectura a la vez, así que
+    # saber dónde está clonado un repo y en qué SHA está no cuesta ni un proceso. La
+    # resolución de la ruta sigue las mismas reglas que seguía ruta_local(): primero
+    # $RUTAS (para cuando la carpeta local no se llama como el repo), luego los tres
+    # sitios obvios.
+    awk -v home="$HOME" '
+      # --- lectura de refs sin lanzar procesos ---
+      function es_sha(s) { return (length(s) == 40 && s ~ /^[0-9a-f]+$/) }
+      function leer1(f,   l, r) {
+        l = ""; r = (getline l < f); close(f)
+        if (r <= 0) return ""
+        sub(/\r$/, "", l); return l
+      }
+      function packed(gd, nombre,   l, n, s, f) {
+        f = gd "/packed-refs"; s = ""
+        while ((getline l < f) > 0) {
+          sub(/\r$/, "", l)
+          if (l ~ /^#/ || l ~ /^\^/) continue
+          n = l; sub(/^[0-9a-f]+[ \t]+/, "", n)
+          if (n == nombre) { s = l; sub(/[ \t].*$/, "", s); break }
+        }
+        close(f); return s
+      }
+      # En un worktree el gitdir es propio pero los refs viven en el directorio COMÚN:
+      # por eso se busca en los dos, y por eso existe "base".
+      function refsha(gd, base, nombre,   s) {
+        s = leer1(gd "/" nombre); if (es_sha(s)) return s
+        if (base != gd) { s = leer1(base "/" nombre); if (es_sha(s)) return s }
+        s = packed(gd, nombre)
+        if (s == "" && base != gd) s = packed(base, nombre)
+        return s
+      }
+      function gitdir(p,   l) {
+        if (leer1(p "/.git/HEAD") != "") return p "/.git"
+        l = leer1(p "/.git")                    # worktree o submódulo: .git es un FICHERO
+        if (l ~ /^gitdir: /) { sub(/^gitdir: /, "", l); return l }
+        return ""
+      }
+      function cabeza(gd, base,   h) {
+        h = leer1(gd "/HEAD")
+        if (h ~ /^ref: /) { sub(/^ref: /, "", h); return refsha(gd, base, h) }
+        if (es_sha(h)) return h                 # HEAD desprendido
+        return ""
+      }
       $1=="E" { est[$2]=$3; next }
-      $1=="V" { ant[$2]=$3; next }
+      $1=="R" { r=$0; sub(/^R[ \t]+[^ \t]+[ \t]+/, "", r); rutas[$2]=r; next }
       $1!="L" { next }
-      { sub(/^L[ 	]+/, "") }
-      /^[[:space:]]*#/ || NF==0 { next }
-      {
-        n=$1
-        if (!(n in est)) { print "SINDATOS " n; next }
-        print "MARCA " n " " est[n]
-        if (primera == "si") next
-        # Un repo sin marca local NO ha cambiado: es que no lo seguíamos hasta hoy.
-        # Compararlo contra una marca vacía da siempre distinto, o sea que saldría como
-        # movido sin que nadie lo haya tocado. Y no es un caso raro: pasa EN BLOQUE cada
-        # vez que se amplía repos.txt o se siembra estado.txt (29 repos de golpe el
-        # 1-sep-2026). Un aviso de 29 movimientos falsos enseña a no leer los avisos.
-        if (!(n in ant)) { print "NUEVO " n; next }
-        if (est[n] != ant[n]) print "CAMBIADO " n
+      NF<2 || $2 ~ /^#/ { next }
+      { orden[++nl] = $2 }
+      END {
+        for (i = 1; i <= nl; i++) {
+          n = orden[i]
+          # est[n] VACÍO no es "al día": es que no hay con qué comparar. Sin esta
+          # guarda, "" == m2 (que vale "" en cualquier repo sin rama master) daba
+          # ALDIA sin haber comparado nada -- el mismo falso silencio que esta sección
+          # viene a matar, entrando por la otra puerta. Encontrado en auditoría el
+          # 6-sep-2026, el mismo día que se escribió.
+          if (!(n in est) || est[n] == "") { print "SINDATOS\t" n; continue }
+          print "MARCA\t" n "\t" est[n]
+          cand[1] = (n in rutas) ? rutas[n] : ""
+          cand[2] = home "/" n; cand[3] = home "/repos/" n; cand[4] = home "/Desktop/" n
+          p = ""; gd = ""
+          for (c = 1; c <= 4; c++) {
+            if (cand[c] == "") continue
+            gd = gitdir(cand[c])
+            if (gd != "") { p = cand[c]; break }
+          }
+          if (p == "") { print "NOCLON\t" n; continue }
+          base = gd
+          if (base ~ /\/worktrees\//) sub(/\/worktrees\/.*$/, "", base)
+          h  = cabeza(gd, base)
+          m1 = refsha(gd, base, "refs/heads/main")
+          m2 = refsha(gd, base, "refs/heads/master")
+          # Tres estados, nunca colapsados: "no se pudo leer" NO es "al día".
+          if (h == "" && m1 == "" && m2 == "") { print "NOSESABE\t" n "\t" p; continue }
+          if (est[n] == h || est[n] == m1 || est[n] == m2) print "ALDIA\t" n
+          else print "PENDIENTE\t" n "\t" p
+        }
       }
     ' "$TMPD/todo" > "$TMPD/salida" 2>/dev/null
 
+    # El awk emite <ESTADO>TAB<nombre>[TAB<ruta>]. El separador es TAB y no espacio
+    # porque hay rutas de repo CON ESPACIOS (~/repos/OpenCo Desing en el PC Nuevo): con
+    # $3 sobre campos separados por espacio se imprimía media ruta, y encima justo en el
+    # renglón que le dice al agente "git -C <ruta> status -sb". Es el mismo fallo que
+    # este cambio arregla en sueno.sh; aquí se cerró en la auditoría del 6-sep.
     NUEVO_VISTO="$TMPD/visto.nuevo"
-    grep '^MARCA ' "$TMPD/salida" 2>/dev/null | awk '{print $2"	"$3}' > "$NUEVO_VISTO"
+    grep '^MARCA' "$TMPD/salida" 2>/dev/null | awk -F'\t' '{print $2"\t"$3}' > "$NUEVO_VISTO"
 
-    CAMBIADOS=""
-    SIN_DATOS=""
-    # Solo se recorren los que HAN cambiado, que son pocos; ruta_local no se llama 40
-    # veces sino una por repo movido.
-    for NOMBRE in $(grep '^CAMBIADO ' "$TMPD/salida" 2>/dev/null | awk '{print $2}'); do
-      P=$(ruta_local "$NOMBRE")
-      if [ -n "$P" ]; then
-        CAMBIADOS="${CAMBIADOS}  ${NOMBRE}  ->  ${P}
-"
-      else
-        CAMBIADOS="${CAMBIADOS}  ${NOMBRE}  ->  NO CLONADO AQUÍ (clónalo antes de trabajar en él)
-"
-      fi
-    done
-    # Los vigilados se reparten en TRES montones, y el titular solo puede hablar de uno.
-    #   SIN_DATOS    - el servidor no sabe nada de ellos.
-    #   NUEVOS       - el servidor sí sabe, pero esta máquina no los seguía: no hay
-    #                  contra qué comparar, así que tampoco se sabe si se han movido.
-    #   COMPARABLES  - los únicos de los que se puede decir "sin movimiento" y ser cierto.
-    SIN_DATOS=$(grep -c '^SINDATOS ' "$TMPD/salida" 2>/dev/null || true)
-    [ -n "$SIN_DATOS" ] || SIN_DATOS=0
-    CON_DATOS=$(grep -c '^MARCA ' "$TMPD/salida" 2>/dev/null || true)
-    [ -n "$CON_DATOS" ] || CON_DATOS=0
-    NUEVOS_N=$(grep -c '^NUEVO ' "$TMPD/salida" 2>/dev/null || true)
-    [ -n "$NUEVOS_N" ] || NUEVOS_N=0
-    COMPARABLES=$((CON_DATOS - NUEVOS_N))
-    # Con tope: los NUEVOS llegan en bloque por naturaleza (ampliar repos.txt, sembrar
-    # estado.txt), y el diseño apunta a 200 repos. Una lista de 200 nombres se comería
-    # media inyección de las 10.000 que admite Claude Code, y no hay nada que hacer con
-    # ella: es informativa. Los CAMBIADOS no llevan tope a propósito -- esos sí piden
-    # actuar, y llegan de pocos en pocos.
-    NUEVOS_LISTA=$(grep '^NUEVO ' "$TMPD/salida" 2>/dev/null | awk '{print "  " $2}' | head -20)
-    if [ "$NUEVOS_N" -gt 20 ]; then
-      NUEVOS_LISTA="$NUEVOS_LISTA
-  ... y $((NUEVOS_N - 20)) más"
-    fi
+    CON_DATOS=$(grep -c '^MARCA' "$TMPD/salida" 2>/dev/null || true);    [ -n "$CON_DATOS" ] || CON_DATOS=0
+    SIN_DATOS=$(grep -c '^SINDATOS' "$TMPD/salida" 2>/dev/null || true); [ -n "$SIN_DATOS" ] || SIN_DATOS=0
+    PEND_N=$(grep -c '^PENDIENTE' "$TMPD/salida" 2>/dev/null || true);   [ -n "$PEND_N" ] || PEND_N=0
+    ALDIA_N=$(grep -c '^ALDIA' "$TMPD/salida" 2>/dev/null || true);      [ -n "$ALDIA_N" ] || ALDIA_N=0
+    NOCLON_N=$(grep -c '^NOCLON' "$TMPD/salida" 2>/dev/null || true);    [ -n "$NOCLON_N" ] || NOCLON_N=0
+    NOSABE_N=$(grep -c '^NOSESABE' "$TMPD/salida" 2>/dev/null || true);  [ -n "$NOSABE_N" ] || NOSABE_N=0
+    COMPARADOS=$((ALDIA_N + PEND_N))
 
-    FECHA_ANT=$(awk 'NR==1 {print $3, $4}' "$VISTO" 2>/dev/null || true)
+    # Los topes son de CARACTERES disfrazados de líneas: la sección 4 recorta por el
+    # FINAL si el envío se pasa de MAX_CHARS_TOTAL, y lo primero que se cae es la cola
+    # (el aviso de lectura degradada, entre otras cosas). Esta sección va la PRIMERA, así
+    # que crecer aquí se paga allí. 12+12+6 acota el peor caso en ~1,2 KB de los 10 KB.
+    # Y los tres dicen cuántos dejan fuera: un informe recortado en silencio es el fallo
+    # de siempre.
+    PENDIENTES=$(grep '^PENDIENTE' "$TMPD/salida" 2>/dev/null | awk -F'\t' '{print "  " $2 "  ->  " $3}' | head -12)
+    [ "$PEND_N" -gt 12 ] && PENDIENTES="$PENDIENTES
+  ... y $((PEND_N - 12)) más"
 
-    if [ "$PRIMERA" = "si" ]; then
-      SALIDA="${SALIDA}=== ÍNDICE DE CAMBIOS: primera vez en esta máquina ===
-No había marcador previo, así que se ha anotado el estado actual. A partir de la próxima
-sesión, aquí saldrá qué se ha movido desde la última vez.
+    # Si el awk se cae, "salida" queda vacía y esta sección no imprimiría NADA: es decir,
+    # se leería igual que "todo en orden". Ese es el fallo silencioso número uno de este
+    # proyecto, así que se dice en voz alta y con su propio titular. NO va por saltado():
+    # ese cajón se publica bajo "se agotó el presupuesto de Ns", y esto no es el reloj --
+    # mandar al lector a mirar el cronómetro cuando el fallo fue del awk es hacerle
+    # depurar la pieza equivocada.
+    if [ "$CON_DATOS" -eq 0 ] && [ "$SIN_DATOS" -eq 0 ]; then
+      SALIDA="${SALIDA}=== ÍNDICE DE CAMBIOS: NO SE PUDO LEER ===
+El servidor respondió, pero de su respuesta no ha salido ni un repo. Esto NO es \"todo al
+día\": es que esta comprobación no se ha hecho. Si te vas a fiar de ella, mírala a mano.
 
 "
-    elif [ -n "$CAMBIADOS" ]; then
-      SALIDA="${SALIDA}=== SE HA MOVIDO ALGO EN ESTOS REPOS${FECHA_ANT:+ (desde $FECHA_ANT)} ===
-$CAMBIADOS
-Esto dice DÓNDE, no POR QUÉ ni cuánto. Si vas a trabajar en uno, entra y lee su
-$FICHERO: el detalle y lo que se descartó están ahí, no aquí.
+    elif [ "$PEND_N" -gt 0 ]; then
+      SALIDA="${SALIDA}=== ESTOS CLONES NO ESTÁN EN LA PUNTA QUE VIO EL SERVIDOR ($PEND_N de $COMPARADOS) ===
+$PENDIENTES
+No dice en qué dirección: puede faltar un pull o puede haber trabajo aquí sin subir. Se
+mira el .git del clon, no un marcador, así que SEGUIRÁ saliendo hasta que cuadre. Si vas
+a trabajar en uno: git -C <ruta> status -sb, y lee su $FICHERO allí.
+
+"
+    elif [ "$COMPARADOS" -eq 0 ]; then
+      SALIDA="${SALIDA}=== ÍNDICE DE CAMBIOS: HOY NO DICE NADA ===
+No se ha podido comparar ni un repo vigilado ($SIN_DATOS sin datos en el servidor,
+$NOCLON_N sin clonar aquí, $NOSABE_N con el .git ilegible). Esto no es \"todo al día\", es
+\"no se sabe\".
 
 "
     else
-      # El titular dice SOBRE CUÁNTOS repos habla, y no habla de los que no sabe.
-      # Antes ponía "sin movimiento en ninguno de los repos vigilados" sin mirar
-      # SIN_DATOS. El 1-sep-2026, con 27 de los 40 vigilados sin ningún dato en el
-      # servidor, el titular afirmó igualmente sobre todos y tranquilizó; el aviso de
-      # SIN DATOS salía después, en párrafo aparte, así que la letra pequeña
-      # desmentía al titular. Coste real: se pasaron por alto 13 repos que sí se
-      # habían movido, uno de ellos 21 commits por detrás.
-      if [ "$COMPARABLES" -eq 0 ]; then
-        SALIDA="${SALIDA}=== ÍNDICE DE CAMBIOS: HOY NO DICE NADA${FECHA_ANT:+ (desde $FECHA_ANT)} ===
-No hay ni un repo vigilado con el que comparar ($SIN_DATOS sin datos en el servidor,
-$NUEVOS_N nuevos en el índice). Esto no es \"sin movimiento\", es \"no se sabe\".
-
-"
-      elif [ "$SIN_DATOS" -gt 0 ] || [ "$NUEVOS_N" -gt 0 ]; then
-        # Ojo con ${VAR:+...} aquí: estas variables valen "0", que NO es vacío, así que
-        # habría escrito "0 nuevos". Se arma a mano y se acabó la sutileza.
-        RESTO=""
-        [ "$NUEVOS_N" -gt 0 ] && RESTO="$NUEVOS_N nuevos en el índice"
-        if [ "$SIN_DATOS" -gt 0 ]; then
-          [ -n "$RESTO" ] && RESTO="$RESTO y "
-          RESTO="${RESTO}$SIN_DATOS sin datos en el servidor"
-        fi
-        SALIDA="${SALIDA}=== ÍNDICE DE CAMBIOS: PARCIAL${FECHA_ANT:+ (desde $FECHA_ANT)} ===
-Sin movimiento en los $COMPARABLES repos que ya seguía.
-De los demás NO se sabe: $RESTO.
-No es que no se hayan movido; es que no hay con qué compararlos. Detalle abajo.
-
-"
-      else
-        SALIDA="${SALIDA}=== ÍNDICE DE CAMBIOS${FECHA_ANT:+ (desde $FECHA_ANT)} ===
-Sin movimiento en ninguno de los $COMPARABLES repos vigilados.
-
-"
-      fi
-    fi
-
-    # Los que entran hoy al índice. Se dicen por nombre y NO como movimiento: hasta la
-    # próxima sesión no hay contra qué comparar. A partir de mañana entran en el reparto
-    # normal y ya sí avisan de verdad.
-    if [ "$NUEVOS_N" -gt 0 ] && [ "$PRIMERA" != "si" ]; then
-      SALIDA="${SALIDA}ENTRAN HOY EN EL ÍNDICE ($NUEVOS_N): esta máquina no los seguía hasta ahora, así que
-de estos NO se sabe si se han movido. Se anotan tal como están y desde la próxima sesión
-avisan como los demás.
-$NUEVOS_LISTA
+      SALIDA="${SALIDA}=== ÍNDICE DE CAMBIOS ===
+Los $COMPARADOS repos comparables están en la punta que vio el servidor.
 
 "
     fi
 
-    # Se avisa, y se distingue de "sin cambios". Es normal justo después de montar los
-    # webhooks e irá desapareciendo según se toque cada repo.
-    if [ "${SIN_DATOS:-0}" -gt 0 ] 2>/dev/null; then
-      SALIDA="${SALIDA}SIN DATOS TODAVÍA en $SIN_DATOS repo(s): el servidor aún no ha recibido ningún aviso suyo
-desde que se montaron los webhooks. NO quiere decir que no hayan cambiado, quiere decir
-que de esos no se sabe. Se irá llenando solo con el primer push de cada uno.
+    # Vigilado y sin clonar aquí. El CLAUDE.md global manda clonarlo por iniciativa
+    # propia (salvo archivados), así que se dice por nombre y no se esconde en una cuenta.
+    if [ "$NOCLON_N" -gt 0 ]; then
+      SALIDA="${SALIDA}VIGILADOS Y NO CLONADOS EN ESTA MÁQUINA ($NOCLON_N):
+$(grep '^NOCLON' "$TMPD/salida" 2>/dev/null | awk -F'\t' '{print "  " $2}' | head -12)$([ "$NOCLON_N" -gt 12 ] && printf '\n  ... y %s más' "$((NOCLON_N - 12))")
+De estos no se sabe nada local, porque no hay clon con el que comparar.
+
+"
+    fi
+
+    # Hay clon, pero no se han podido leer sus refs. NO es "al día" y no cuenta como tal.
+    if [ "$NOSABE_N" -gt 0 ]; then
+      SALIDA="${SALIDA}CLON ILEGIBLE en $NOSABE_N repo(s): existe la carpeta pero no se ha podido sacar ningún
+SHA de su .git (ni HEAD, ni main, ni master, ni packed-refs). De estos NO se sabe si
+están al día; míralos a mano.
+$(grep '^NOSESABE' "$TMPD/salida" 2>/dev/null | awk -F'\t' '{print "  " $2 "  ->  " $3}' | head -6)$([ "$NOSABE_N" -gt 6 ] && printf '\n  ... y %s más' "$((NOSABE_N - 6))")
+
+"
+    fi
+
+    # Se avisa, y se distingue de "sin cambios": el servidor no ha recibido ningún aviso
+    # de esos repos todavía.
+    if [ "$SIN_DATOS" -gt 0 ]; then
+      SALIDA="${SALIDA}SIN DATOS TODAVÍA en $SIN_DATOS repo(s): el servidor aún no ha recibido ningún aviso suyo.
+NO quiere decir que no hayan cambiado, quiere decir que de esos no se sabe. Se va
+llenando solo con el primer push de cada uno.
+
+"
+    fi
+
+    if [ "$COMPLETO" = "no" ]; then
+      SALIDA="${SALIDA}LA LECTURA DEL SERVIDOR LLEGÓ CORTADA (falta la marca de fin). Lo de arriba vale, pero
+puede faltar algún repo de la lista y algún SHA puede haber llegado a medias. No lo leas
+como \"están todos\".
 
 "
     fi

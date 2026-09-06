@@ -321,3 +321,28 @@ prueba en la máquina de quien lo probó; se generalizó y se trajo a este repo
 `BITACORA_INDICE_REPOS`. Sigue con el compromiso de "marcar al leer" descrito arriba,
 sin resolver todavía. Y de paso resolvió el pendiente de la nota anterior (corte por
 fecha real, no solo por número) para quien lo configure.
+
+**Resuelto el 2026-09-06, y por otra vía: quitando el marcador de en medio.** Los dos
+caminos de arriba —marcar al leer, o marcar al acusar— discuten *cuándo* consumir el
+aviso, y los dos dan por bueno que el índice compare contra un marcador. El fallo estaba
+ahí: comparar el estado del servidor contra «lo que ya te enseñé» convierte cualquier
+aviso en un aviso de UNA sola vez. Y su modo de fallo es peor que perder un aviso, porque
+es indistinguible de la buena noticia: te dice que un repo se ha movido, no haces el pull,
+y desde la sesión siguiente el índice dice **«sin movimiento»** con el clon por detrás,
+para siempre.
+
+Se vio en el PC Nuevo el 6-sep-2026: `bitacora-visto` tenía `bitacora-project` en
+`88b1d6d2` —que era la punta de `origin/main`— y el arranque anunció «sin movimiento en
+ninguno de los 43 repos vigilados» con el clon 12 commits por detrás. Dentro venía
+`scripts/coste-sesiones.py`, que llevaba dos días sin llegar a esa máquina.
+
+Ahora la sección 0 compara el SHA del servidor contra **el `.git` del clon** (HEAD,
+`refs/heads/main` o `refs/heads/master`). Eso ya no es una novedad que se consume: es un
+**estado**, y un estado no se puede gastar leyéndolo — vuelve a salir en cada arranque
+hasta que cuadre de verdad. El marcador se sigue escribiendo, pero como registro de qué
+vio el servidor y cuándo, no como criterio. Al encender el cambio aparecieron 9 de 43
+repos descuadrados, todos mudos hasta entonces.
+
+La lección, más ancha que este caso: **cuando lo que quieres saber es un estado, no lo
+derives de un histórico de avisos.** Míralo. El histórico contesta «¿te lo dije?», que no
+es la pregunta.
