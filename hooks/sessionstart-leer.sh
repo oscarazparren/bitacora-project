@@ -48,6 +48,15 @@ CLAUDE_LOCAL="${BITACORA_CLAUDE_LOCAL:-$HOME/.claude/CLAUDE.md}"
 CLAUDE_CANONICO="${BITACORA_CLAUDE_CANONICO:-}"
 
 SALIDA=""
+# El CUERPO de la bitácora del repo NO se acumula en $SALIDA: se aparta aquí y se pega
+# AL FINAL del sobre, cuando ya está compuesto todo lo demás. El porqué entero está
+# donde se pega (sección 2z). Se inicializa aquí, y no donde se llena, porque la
+# sección 2z lo lee siempre -- también cuando la sesión no arranca en un repo y la
+# sección 1 no llega a correr, que con 'set -u' abortaría el hook entero.
+COLA_BITACORA=""
+# La entrada más reciente DE ESTE REPO, para el systemMessage. La sección 4 ya no puede
+# deducirla del sobre desde que el cuerpo va al final: ver allí.
+ULTIMA_REPO=""
 
 # ---------- stdin: 'source' de la invocación y id de sesión ----------
 # Claude Code entrega en stdin un JSON con, entre otras cosas, "source" (startup,
@@ -796,16 +805,27 @@ PLANTILLA
       done
       ENTRADAS=$(printf '%s' "$ENTRADAS_TEXTO" | sanear_delimitadores)
       if [ -n "$ENTRADAS" ]; then
-        SALIDA="${SALIDA}=== BITACORA DEL REPO: $NOMBRE ===
+        # EL CUERPO SE APARTA Y SE PEGA AL FINAL DEL SOBRE (sección 2z). Aquí, en su
+        # sitio de siempre, queda solo el renglón que dice dónde ha ido: sin él, "la
+        # bitácora no ha llegado" y "la bitácora está más abajo" se leen igual, y ese
+        # es justo el modo de fallo que este hook existe para no tener. Los AVISOS de
+        # esta sección (por detrás del remoto, trabajo sin subir, el suelo, cuántas
+        # entradas quedan, cómo anotar) NO se mueven: son cortos y no se pueden leer
+        # en ningún otro sitio sin ejecutar algo. Lo que se mueve es el bulto.
+        COLA_BITACORA="=== BITACORA DEL REPO: $NOMBRE ===
 $ENTRADAS
 
 "
+        ULTIMA_REPO=$(printf '%s' "$ENTRADAS" | grep -m1 '^## ' | sed 's/^## //' | cut -c1-70 || true)
+        SALIDA="${SALIDA}(la bitácora de $NOMBRE va AL FINAL de este registro, por tamaño)
+
+"
         if [ -n "$SUELO_APLICADO" ]; then
-          SALIDA="${SALIDA}AVISO: el filtro por fecha dejaba esta sección en CERO entradas (marcador: $FECHA_REPO_DIA). Se enseña la más reciente de todos modos. Quedan $ENTRADAS_OMITIDAS entrada(s) más en $F — si necesitas contexto de días anteriores, léelas ahí.
+          SALIDA="${SALIDA}AVISO: el filtro por fecha dejaba la bitácora del final en CERO entradas (marcador: $FECHA_REPO_DIA). Se enseña la más reciente de todos modos. Quedan $ENTRADAS_OMITIDAS entrada(s) más en $F — si necesitas contexto de días anteriores, léelas ahí.
 
 "
         elif [ "$ENTRADAS_OMITIDAS" -gt 0 ]; then
-          SALIDA="${SALIDA}(quedan $ENTRADAS_OMITIDAS entrada(s) sin mostrar aquí, la más reciente del $FECHA_CORTE hacia atrás — completas en $F)
+          SALIDA="${SALIDA}(de la bitácora del final quedan $ENTRADAS_OMITIDAS entrada(s) sin mostrar, la más reciente del $FECHA_CORTE hacia atrás — completas en $F)
 
 "
         fi
@@ -1514,6 +1534,65 @@ elif usa_flota && [ -n "$FLOTA_SSH" ]; then
   saltado "foto de configuración entre máquinas: sin presupuesto de tiempo"
 fi
 
+# ---------- 2z. El CUERPO de la bitácora del repo, pegado AL FINAL ----------
+# QUÉ SE PIERDE CUANDO EL SOBRE NO CABE LO DECIDE ESTE ORDEN, y hasta el 6-sep-2026 lo
+# decidía al revés. El recorte de la sección 4 corta por el FINAL, así que lo último es
+# lo primero que se cae. Con el cuerpo de la bitácora al principio, el corte caía DENTRO
+# de él y se llevaba por delante todo lo que venía detrás: la auditoría de sesiones que
+# cerraron sin anotar, el informe del sueño, la deriva del CLAUDE.md y el descuadre de
+# configuración. Medido en vivo ese día en este repo, con la conf desviada: sobre
+# completo 16.020 bytes, entregados 9.920, y 4.190 bytes de avisos que no se escriben en
+# ningún otro sitio no llegaron -- en silencio, que es lo caro.
+#
+# EL CRITERIO NO ES NUEVO NI ES DE GUSTO: es el de la cabecera de la sección 1d, "se
+# pone por delante de todo lo voluminoso", aplicado un nivel más arriba. Delante va lo
+# que no se puede leer en ningún otro sitio; al final, lo que sí. La bitácora sí: es un
+# fichero que está ahí, y el propio aviso de corte manda abrirlo. Esos avisos, no: se
+# calculan en el arranque y no existen en ninguna parte hasta que este hook los dice.
+#
+# Y POR QUÉ ESTO Y NO ACOTAR EL SUELO DE LA SECCIÓN 1, que era la otra salida. Acotarlo
+# deja el sobre en 11.866 bytes con los números del 6-sep (medido, no estimado): SIGUE
+# sin caber, y sigue cayendo el final. Para que cupiera habría que bajar ADEMÁS
+# REPO_MAX_CHARS a un número que depende
+# del tamaño de todo lo demás -- un acuerdo entre puntos del fichero que se editan por
+# separado, que se queda corto EN SILENCIO en cuanto crece cualquiera de ellos. Es la
+# misma promesa a distancia que esta sección 4 ya rechazó dos veces (el hueco reservado
+# al bloque degradado, y las columnas de estado.txt). Aquí no hay número que ajustar
+# MIENTRAS los avisos quepan en el hueco del recorte; y cuando no quepan, se DICE. Esa
+# segunda mitad es un candado y vive en la sección 4, no en este comentario: se busca
+# por "el corte ha entrado en los AVISOS".
+#
+# HASTA DÓNDE LLEGA ESTO, con el número y no con un "siempre" -- aquí ponía "crezca lo
+# que crezca, lo que absorbe el recorte es siempre lo releíble", y eso el código no lo
+# da. El recorte corta $SALIDA por el final SIN saber dónde empieza la cola, así que lo
+# releíble absorbe el golpe solo mientras el prefijo de avisos quepa en el hueco. Con los
+# números del 6-sep el hueco ronda 9.270 bytes menos el bloque degradado, y el prefijo
+# mide 5.866: cabe. Pero que deje de caber NO es hipotético -- el log de esta misma
+# máquina tiene un arranque de 22.548 bytes de sobre ese día a las 16:42, con la cola en
+# unos 10,5 KB, o sea un prefijo de ~12.000. Por eso hay candado y no confianza.
+#
+# EFECTO LATERAL BUENO, dicho con cuidado: el suelo de entradas_recientes() -- enseñar la
+# entrada más reciente ENTERA aunque no quepa -- deja de ser un problema sin tocarlo.
+# Ojo, ese suelo garantiza que se COMPONE una entrada, no que se ENTREGUE: con este orden
+# la cola es lo primero que se cae y puede llegar con cero bytes. Lo que cambia es que
+# ahora eso se dice, en vez de llevarse por delante los avisos.
+#
+# LO QUE ESTO NO ARREGLA, y son DOS cosas distintas con motivos distintos -- meterlas en
+# la misma frase con el mismo motivo fue el primer hallazgo de la auditoría del 6-sep:
+#   - La bitácora de FLOTA (sección 2, hasta 5.000) sigue por delante. Es bulto releíble
+#     igual que esta y el mismo argumento pide moverla, pero es SSH: desde aquí no se
+#     puede probar en vivo, y mover a ciegas código que no se puede medir es exactamente
+#     lo que este repo lleva un mes cobrándose. En un repo de flota el recorte puede
+#     seguir mordiendo el descuadre de configuración.
+#   - La bitácora de la CARPETA (sección 1b, hasta 2.500) también sigue por delante, y su
+#     motivo NO es ese: la 1b es código LOCAL, sin una línea de red, y el repo de mentira
+#     del banco ya la ejercita (corre el hook desde una subcarpeta con su propia
+#     bitácora). Es DEUDA DELIBERADA, no un imposible: se mueve con un $COLA_CARPETA
+#     idéntico a este y se prueba igual de bien. Se dejó fuera por acotar el cambio del
+#     6-sep. Escribirlo como "no se puede probar" es colgar un cartel de irreparable en
+#     una puerta que se abre, y quien lo lea dentro de dos semanas no lo intentará.
+SALIDA="${SALIDA}${COLA_BITACORA}"
+
 # ---------- 3. Registro de ejecución (para poder demostrar que se dispara) ----------
 LOG="${BITACORA_LOG:-$HOME/.claude/bitacora-hook.log}"
 # El log registra el TIEMPO, no solo los bytes. Hasta el 28-ago-2026 solo decía
@@ -1525,7 +1604,7 @@ TRANSCURRIDO=$(( ${EPOCHSECONDS:-$(date +%s)} - INICIO_EPOCH ))
 ESTADO="ok"
 [ -n "$DEGRADADO" ] && ESTADO="DEGRADADO"
 [ "$TRANSCURRIDO" -gt "$PRESUPUESTO" ] && ESTADO="FUERA-DE-PRESUPUESTO"
-echo "$(date '+%Y-%m-%d %H:%M:%S') | cwd=$PWD | repo=${RAIZ:-ninguno} | bytes=${#SALIDA} | ${TRANSCURRIDO}s/${PRESUPUESTO}s | $ESTADO" >> "$LOG"
+echo "$(date '+%Y-%m-%d %H:%M:%S') | cwd=$PWD | repo=${RAIZ:-ninguno} | bytes=${#SALIDA} | cola=${#COLA_BITACORA} | ${TRANSCURRIDO}s/${PRESUPUESTO}s | $ESTADO" >> "$LOG"
 tail -50 "$LOG" > "$LOG.tmp" 2>/dev/null && mv "$LOG.tmp" "$LOG"
 
 # ---------- 4. Envolver en JSON ----------
@@ -1641,7 +1720,15 @@ fi
 B_BLOQUE=$(bytes_de "$BLOQUE_DEGRADADO")
 
 N_ENTRADAS=$(printf '%s' "$SALIDA" | grep -c '^## ' || true)
-ULTIMA=$(printf '%s' "$SALIDA" | grep -m1 '^## ' | sed 's/^## //' | cut -c1-70)
+# LA ENTRADA QUE SE NOMBRA ES LA DE ESTE REPO, y por eso VIENE DADA en vez de deducirse
+# del sobre. Desde que el cuerpo del repo va al final (sección 2z), el primer '## ' de
+# $SALIDA en un repo de flota es el de la bitácora de INFRAESTRUCTURA: deducirlo aquí
+# haría que lo único que Oscar ve en la interfaz nombrase una entrada de servidores al
+# abrir un repo. No es hipotético: es lo que hace el grep de abajo, que hasta hoy
+# acertaba solo porque el cuerpo del repo iba primero. El grep se queda de respaldo para
+# cuando NO hay repo (sesión de flota suelta), que es el caso en el que sí acierta.
+ULTIMA="$ULTIMA_REPO"
+[ -z "$ULTIMA" ] && ULTIMA=$(printf '%s' "$SALIDA" | grep -m1 '^## ' | sed 's/^## //' | cut -c1-70)
 if [ -n "$ULTIMA" ]; then
   RESUMEN="Bitácora leída: $N_ENTRADAS entradas. La última: $ULTIMA"
 else
@@ -1681,6 +1768,46 @@ son $MAX_CHARS_TOTAL. Lo que falta NO está perdido: está en la BITACORA.md del
 buscas no aparece arriba, ábrela y léela.]
 "
   HUECO=$((MAX_CHARS_TOTAL - B_CABECERA - B_BLOQUE - B_PIE - $(bytes_de "$AVISO_CORTE")))
+  # ¿EL CORTE SE HA QUEDADO EN LA BITÁCORA, O HA LLEGADO A LOS AVISOS? No es lo mismo, y
+  # sin esto se leía igual. La sección 2z pone la bitácora al final precisamente para que
+  # sea ella la que absorba el recorte, pero eso solo se cumple mientras el prefijo de
+  # avisos quepa en el hueco -- y el log de esta máquina tiene arranques en los que no
+  # cabría (ver el comentario de la 2z, con el número). Cuando no cabe, lo que se pierde
+  # son avisos que NO están escritos en ningún otro sitio, y el texto de aquí abajo
+  # ("está en la BITACORA.md del repo") sería sencillamente FALSO.
+  #
+  # Se MIDE, no se supone: el prefijo es todo $SALIDA menos la cola, y la cola sigue
+  # entera en su propia variable. Y el renglón extra se DESCUENTA del hueco con
+  # bytes_de() en la línea siguiente a añadirlo -- nada de reservarle sitio, que es lo
+  # que esta misma sección lleva dos días rechazando.
+  B_PREFIJO=$(( $(bytes_de "$SALIDA") - $(bytes_de "$COLA_BITACORA") ))
+  if [ "$HUECO" -lt "$B_PREFIJO" ]; then
+    # NO SE AÑADE TEXTO: SE SUSTITUYE, y el hueco se vuelve a calcular entero con el
+    # texto nuevo. Añadirlo fue el primer intento y REVENTABA EL SOBRE: con el máximo en
+    # 1.000 y en 1.200 -- dos configuraciones que el banco ya probaba y que la garantía
+    # escrita ayer declara válidas -- se entregaban más bytes de los que caben, o sea
+    # justo lo que esta sección existe para impedir. Lo cazó el banco en la primera
+    # pasada, no la lectura. Sustituir no puede desbordar: lo que entra mide como lo que
+    # sale.
+    #
+    # Y sustituir es lo correcto por el CONTENIDO, no solo por el tamaño: el aviso de
+    # arriba dice "está en la BITACORA.md del repo", y en esta rama eso es FALSO -- lo
+    # que se ha perdido son avisos que no están en ninguna bitácora.
+    # MIDE MENOS QUE EL QUE SUSTITUYE (215 bytes contra 220, con los mismos números
+    # dentro), y eso no es cosmética: si midiera más, el sobre se pasaría del máximo en
+    # las configuraciones apretadas que la garantía declara válidas. Con una versión de
+    # 233 el banco entregaba 1.001 bytes contra un máximo de 1.000.
+    AVISO_CORTE="
+[CORTADO HASTA LOS AVISOS: ocupaba $TOTAL y el máximo son $MAX_CHARS_TOTAL. Lo que falta de la
+bitácora está en su fichero; lo que falta de los AVISOS de arriba no está escrito en
+ningún otro sitio: compruébalo a mano.]
+"
+    HUECO=$((MAX_CHARS_TOTAL - B_CABECERA - B_BLOQUE - B_PIE - $(bytes_de "$AVISO_CORTE")))
+    # Y se dice también en lo ÚNICO que se ve sin abrir el contexto. $RESUMEN se compone
+    # más arriba, antes de saber si iba a haber recorte; aquí ya se sabe.
+    RESUMEN="$RESUMEN — OJO: la lectura llegó recortada hasta los avisos"
+    export RESUMEN
+  fi
   # Aquí había un suelo de 500 "para que siempre llegue algo de cuerpo", y ese suelo
   # PODÍA PASARSE DEL MÁXIMO: es decir, en el único caso en que se dispara hacía justo
   # lo contrario de lo que esta sección existe para evitar, y encima con 500 caracteres

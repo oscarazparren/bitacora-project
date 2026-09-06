@@ -11,6 +11,203 @@ Formato: `## AAAA-MM-DD — [dispositivo] titular`
 
 ---
 
+## 2026-09-07 — [PC Nuevo] La bitácora se va al final del sobre: el recorte se la come a ella, que se puede releer, y no a los avisos, que no
+
+El «queda abierto» de la entrada anterior dejaba dos salidas y había que elegir una.
+Elegida **(b): el cuerpo de la bitácora del repo al final del sobre**. Lo que el recorte se
+lleva pasa a ser lo único del sobre que se puede releer abriendo un fichero, y los avisos
+que no están escritos en ningún otro sitio llegan enteros.
+
+### 1. Medido antes de tocar nada, y con la conf ENTERA desviada
+
+`BITACORA_CONF` apuntando a una copia, porque `BITACORA_VISTO` a secas no desvía nada: la
+conf lo asigna a pelo antes de los `${VAR:-default}` del hook. Los marcadores reales
+quedaron intactos en todas las pasadas — comprobado fila a fila y no solo con el `md5`,
+que al final de la sesión dejó de cuadrar por un motivo ajeno: ver el apartado 6.
+
+| pieza del sobre | bytes |
+|---|---|
+| cabecera + pie | 515 |
+| sección 0 (índice) | 817 |
+| avisos de la sección 1 (sin subir 266, rótulo nuevo 78, quedan N 155, cómo anotar 170) | 669 |
+| 1c sesiones / auditoría / 1c-bis sueño / 1d CLAUDE.md / 2c config | 3.864 |
+| **cuerpo de la bitácora del repo** | **10.498** |
+| **total** | **16.364** contra un máximo de 10.000 |
+
+(Las piezas se cuentan por rangos de líneas, así que suman un byte menos que el total.)
+
+Con el hook de antes del cambio y el MISMO árbol de trabajo: sobre 16.286, entregados
+9.913, y de lo que iba detrás del cuerpo **no llegaba ni un byte** — los 3.864 de avisos,
+más el «quedan N entradas» (155) y el «para anotar aquí» (170). **4.189 bytes en
+silencio.** No es deducción: es el `additionalContext` leído del JSON y contado con `wc -c`.
+
+### 2. Por qué (b) y no (a)
+
+**(a) acotar el suelo no hace que el sobre quepa.** Con el cuerpo acotado al
+`REPO_MAX_CHARS=6000` que ya existe, el sobre de hoy se queda en **11.866** — medido, no
+estimado: sigue por encima de 10.000 y el recorte sigue cayendo en el final, o sea en el
+descuadre de configuración. Para que cupiera habría que bajar además `REPO_MAX_CHARS` a un
+número que depende del tamaño de todo lo demás: un acuerdo entre puntos del fichero que se
+editan por separado, que **se queda corto en silencio** en cuanto crece cualquiera de
+ellos. Es la misma promesa a distancia que esta sección 4 ya rechazó dos veces esta semana.
+
+**(b) no tiene número que ajustar** *mientras los avisos quepan en el hueco*. Esa segunda
+mitad no estaba y la puso la auditoría: ver el apartado 4. Y el criterio ya estaba escrito
+en la casa — la cabecera de la sección 1d dice «se pone por delante de todo lo
+voluminoso»; esto es aplicarlo un nivel más arriba.
+
+**Efecto lateral bueno:** el suelo de `entradas_recientes()` —enseñar la entrada más
+reciente entera aunque no quepa— deja de ser un problema **sin tocarlo**. Ojo con cómo se
+dice: garantiza que se COMPONE una entrada, no que se ENTREGUE. Lo que cambia es que ahora
+lo que no cabe se recorta diciéndolo.
+
+### 3. Se movió el BULTO, no la sección
+
+Los avisos de la sección 1 —por detrás del remoto, trabajo sin subir, el suelo del filtro,
+cuántas entradas quedan, cómo anotar— se quedan donde estaban: son cortos y no se pueden
+leer en ningún otro sitio sin ejecutar algo. Moverlos habría hecho recortable el aviso de
+«N commits sin subir», que el propio código llama «el aviso que de verdad importa antes de
+cerrar la sesión»: la misma avería que se estaba arreglando, en otra ventanilla.
+
+En su sitio queda un rótulo de 78 bytes diciendo dónde ha ido el cuerpo. No es adorno: sin
+él, «la bitácora no ha llegado» y «la bitácora está más abajo» se leen igual — el modo de
+fallo que este hook existe para no tener, y que introducía este mismo cambio.
+
+Y **el `systemMessage` se habría roto en silencio.** `$ULTIMA` salía de un `grep -m1 '^## '`
+sobre `$SALIDA` y acertaba *solo porque el cuerpo del repo iba primero*. Con el cuerpo al
+final, en un repo de flota el primer `## ` es el de la bitácora de INFRAESTRUCTURA: al abrir
+`lizar-*` la interfaz habría nombrado una entrada de servidores. Ahora la sección 1 se lo
+pasa en `$ULTIMA_REPO`, y el grep queda de respaldo para la sesión que no arranca en ningún
+repo, que es el caso donde deducirlo sí acierta.
+
+### 4. La auditoría NO pasó el cambio, y tenía razón en lo que importaba
+
+Cuatro cosas suyas entraron. Las dos primeras son comentarios míos que **afirmaban
+garantías que el código no daba** — el fallo que este repo considera grave.
+
+- **«Crezca lo que crezca, lo que absorbe el recorte es siempre lo releíble» era falso.**
+  El `head -c` corta `$SALIDA` por el final **sin saber dónde empieza la cola**: si el
+  prefijo de avisos no cabe en el hueco, el recorte vuelve a morder avisos irrepetibles —
+  el fallo de partida, entrando por la puerta del remedio. Y no es hipotético: el log de
+  esta máquina tiene un arranque de **22.548 bytes** de sobre a las 16:42 del 6-sep, con la
+  cola en ~10,5 KB, o sea un prefijo de ~12.000 contra un hueco de ~9.270. **Ahora hay
+  candado en vez de promesa**: se mide el prefijo (`$SALIDA` menos la cola) y, si el corte
+  ha llegado a él, el aviso lo dice y el `systemMessage` también.
+- **La justificación para no mover la sección 1b era falsa, y del peor tipo.** Escribí que
+  1b y flota se quedaban «porque desde aquí no se pueden probar en vivo (hace falta el
+  servidor)». Eso vale para flota, que es SSH; **la 1b no tiene una línea de red**. Era un
+  cartel de «irreparable» colgado en una puerta que se abre, y quien lo leyera dentro de
+  dos semanas no lo intentaría. Ahora están separadas: flota es imposible desde aquí, 1b es
+  **deuda deliberada** — de hecho el banco ya la ejercita.
+- **Un caso del banco no sujetaba nada.** Borrando la línea que llena `$ULTIMA_REPO`, los
+  50 casos seguían verdes: el caso 37 se la entregaba por entorno y el del hook entero
+  corría en un repo sin nada delante, así que el respaldo acertaba solo. Arreglado con un
+  **monorepo**: el repo de mentira tiene ahora una subcarpeta con bitácora propia, la
+  sección 1b compone sus `## ` antes que la cola, y el respaldo se equivoca si la línea no
+  está. Era el ejemplo de manual de un test que pasa igual sin la pieza que dice probar.
+- **La razón declarada para inicializar `COLA_BITACORA` arriba tampoco estaba probada.** El
+  comentario dice que si no, `set -u` mata el hook fuera de un repo — cierto, y ningún caso
+  lo comprobaba. Ahora hay uno que abre la sesión fuera de git.
+
+### 5. El candado se escribió mal a la primera, y lo cazó el banco, no la lectura
+
+Primer intento: **añadir** un renglón al aviso de corte. Reventaba el sobre. Con el máximo
+en 1.000 y en 1.200 —dos configuraciones que el banco ya probaba y que la garantía escrita
+ayer declara válidas— se entregaban más bytes de los que caben, que es exactamente lo que
+esta sección existe para impedir. Se vio en la primera pasada del banco.
+
+Ahora **no añade: sustituye**, y el aviso nuevo mide **215 bytes contra los 220** del que
+quita. Sustituir es además lo correcto por el contenido: el aviso de siempre dice «está en
+la BITACORA.md del repo», y en esa rama eso es **falso** — lo perdido son avisos que no
+están en ninguna bitácora.
+
+### 6. Comprobado en vivo, no deducido
+
+- Hook entero con la conf desviada: entregados **9.916** bytes, y llegan **los cinco**
+  bloques de avisos que antes llegaban a cero, más 3.811 bytes de bitácora y el aviso de
+  corte. Degradado (presupuesto a 1 s): 9.968, con el bloque «ESTA LECTURA VA INCOMPLETA»
+  delante del delimitador, como lo dejó la entrada anterior.
+- Fuera de todo repo, donde la sección 1 no corre: rc=0 y stderr limpio.
+- **El desvío aguantó, y de paso apareció otra sesión viva.** Al final de la sesión el
+  `md5` de `bitacora-visto` y `bitacora-leido` ya NO cuadraba con el del principio, que es
+  justo la señal de alarma. No fue el banco: no hay ni un rastro del repo de mentira en
+  ninguno de los dos, y la fila de `bitacora-project` sigue diciendo `2026-09-03 /
+  2026-09-06`, o sea sin tocar por ninguna de las pasadas. Lo que sí hay es una fila nueva
+  de `lizar-arquitecto` fechada el 07 y los SHA regenerados a las 00:04: **otra sesión,
+  en otro repo, en esta misma máquina**. El desvío por `BITACORA_CONF` hizo su trabajo; el
+  `md5` a secas no distingue «me lo he cargado yo» de «lo ha tocado otro», y hay que ir a
+  mirar QUÉ cambió antes de dar por buena ninguna de las dos lecturas.
+- Los otros cinco bancos siguen verdes: 23, 37, 37, 37 y 15.
+- El log gana un campo `cola=`. Sin él no había forma de contestar «¿llegó hoy la
+  bitácora?» ni «¿se comió avisos?» sin reproducir el arranque a mano — lo señaló la
+  auditoría, y es la avería de agosto con otro campo.
+
+### 7. El banco: de 36 a 64 casos, y ahora corre también el hook ENTERO
+
+Los 36 de ayer prueban **dónde corta** el recorte. Lo que se toca hoy es otra cosa —**qué
+le toca ser cortado**, que lo decide el orden en que las secciones llenan `$SALIDA` y no se
+ve en la sección 4 aislada. Así que el banco extiende su alcance: ocho casos corren el hook
+real contra un repo de mentira con `git init`, bitácora de 27 KB y una subcarpeta que lo
+convierte en monorepo, con la conf desviada igual que las medidas.
+
+Y muerde, comprobado deshaciendo cada cerrojo por separado en una copia y corriendo el
+banco contra ella:
+
+| lo que se deshace | casos que caen |
+|---|---|
+| el hook de ayer entero (cuerpo delante, sin candado, sin `$ULTIMA_REPO`) | **11**: 37, 43, 44, 46, 49, 50, 51, 56, 57, 58, 61 |
+| solo el rótulo que dice dónde ha ido el cuerpo | 3: 49, 51, 57 |
+| solo el candado del «cortado hasta los avisos» | 3: 43, 44, 46 |
+| solo la inicialización de `COLA_BITACORA` | 2: 63, 64 |
+| solo la línea que llena `$ULTIMA_REPO` en la sección 1 | 1: 62 |
+
+Las cinco filas son pasadas reales del banco. Los cuatro casos que solo dependen de la
+**mudanza en sí** —50, 56, 58 y 61— salen de restar: caen con el hook de ayer y no caen
+con ninguno de los deshaces sueltos. Eso sí es deducción, y por eso se dice.
+
+**El máximo del caso apretado no se escribe a mano: se mide.** Se corre primero sin recorte
+para ver dónde empieza el cuerpo y se le deja medio kilobyte, y queda escrito de qué se
+compone ese medio kilobyte. Puesto a mano dependería de cuántos avisos tenga la máquina
+donde se corra —el sueño, la deriva del `CLAUDE.md`, el descuadre de config: ninguno sale
+del repo de mentira, salen del entorno— y saldría verde por casualidad aquí y rojo por
+casualidad en el PC viejo.
+
+### Queda abierto
+
+- **La bitácora de FLOTA (sección 2, hasta 5.000) sigue por delante de los avisos.** Es
+  bulto releíble igual que la del repo y el mismo argumento pide moverla, pero es SSH y en
+  esta sesión el acceso estaba bloqueado: no se puede medir desde aquí. En un repo de
+  flota el recorte puede seguir mordiendo el descuadre de configuración.
+- **La bitácora de la CARPETA (sección 1b, hasta 2.500) también, y esto SÍ se puede hacer
+  aquí.** Es código local, el banco ya la ejercita, y se mueve con un `$COLA_CARPETA`
+  idéntico al que se acaba de escribir. Queda fuera por acotar el cambio de hoy, no por
+  no poder.
+- **`bitacora.conf.example:175` sigue asignando `BITACORA_VISTO` a pelo.** Sin cambiar
+  desde ayer. Al menos la técnica que sí funciona (`BITACORA_CONF`) está ahora escrita en
+  el propio banco, donde la leerá quien vaya a medir.
+- **El log sigue escribiendo `bytes=${#SALIDA}`**, que no es lo entregado. Hoy gana
+  `cola=`, que permite ver el reparto, pero el número de lo realmente entregado sigue sin
+  registrarse.
+- **Con `$SALIDA` vacía el bloque degradado sigue sin salir.** Sin cambiar.
+- **Sigue sin haber `scripts/probar-todo.sh`.** Van seis bancos, uno de ellos ya tarda dos
+  minutos, y lanzarlos a mano es cada día más caro.
+- **Bug preexistente, encontrado de paso y NO tocado:** en la sección 1, cuando el hook
+  crea la bitácora que faltaba, hace `SALIDA="AVISO: no había bitácora…"` con `=` y no con
+  `${SALIDA}`, así que **se carga lo que la sección 0 hubiera puesto**. Solo se dispara la
+  primera vez que se abre un repo sin bitácora.
+- **La auditoría sugiere `/code-review` acotado a los casos nuevos del banco** (aritmética
+  de tamaños entre dos pasadas, expansiones que dependen del entorno, `git init` en
+  temporal). No se ha lanzado.
+
+### La lección
+
+Las dos peores cosas de esta entrada volvieron a ser **comentarios míos que prometían más
+de lo que el código daba** — igual que ayer, y una de ellas justificaba no arreglar algo
+con un motivo falso, que es peor que no justificarlo. Y el candado que las arreglaba estaba
+mal escrito: lo tumbó el banco en la primera pasada, con dos configuraciones que ya
+existían. **La garantía escrita ayer («cabe mientras el máximo sea de 1.000 para arriba»)
+hizo hoy de red**: no por leerla, sino porque había casos que la ejercitaban.
+
 ## 2026-09-06 — [PC Nuevo] Lo primero que se perdía del sobre de arranque era el aviso de que se había perdido algo: el bloque degradado se recortaba siempre
 
 El recorte global de la sección 4 corta por el FINAL, y al final estaba `=== ESTA LECTURA

@@ -1,7 +1,12 @@
 #!/bin/bash
-# Bitácora — BANCO DE PRUEBAS de la sección 4 de hooks/sessionstart-leer.sh: la que
-# compone el sobre (cabecera + bloque degradado + registro + pie), lo recorta si se
-# pasa del máximo que admite un hook, y lo envuelve en JSON.
+# Bitácora — BANCO DE PRUEBAS del SOBRE de arranque de hooks/sessionstart-leer.sh.
+#
+# Cubre dos cosas que se tocan y no son la misma:
+#   - la sección 4, que COMPONE el sobre (cabecera + bloque degradado + registro + pie),
+#     lo recorta si se pasa del máximo que admite un hook, y lo envuelve en JSON; y
+#   - el ORDEN en que las secciones 0..2z llenan ese registro, que es lo que decide QUÉ
+#     se pierde cuando el recorte muerde. Eso último no se ve en la sección 4 aislada:
+#     hace falta correr el hook entero contra un repo de mentira, y eso está al final.
 #
 # ============================================================================
 # POR QUÉ EXISTE ESTE FICHERO
@@ -38,7 +43,15 @@ set -uo pipefail
 AQUI="$(cd "$(dirname "$0")" && pwd)"
 HOOK="${1:-$AQUI/../hooks/sessionstart-leer.sh}"
 [ -f "$HOOK" ] || { echo "no encuentro el hook: $HOOK" >&2; exit 2; }
+# A RUTA ABSOLUTA. Los casos del hook entero (al final) lo lanzan desde OTRO directorio
+# —el repo de mentira—, y una ruta relativa dejaria de resolver alli. Ademas el propio
+# hook la usa para encontrar sus scripts hermanos con $(dirname "$0").
+HOOK="$(cd "$(dirname "$HOOK")" && pwd)/$(basename "$HOOK")"
 command -v node >/dev/null 2>&1 || { echo "hace falta node: la sección 4 lo usa para el JSON" >&2; exit 2; }
+# git lo usan los casos del hook entero, al final. Se comprueba AQUÍ y no allí: comprobado
+# a mitad del fichero, una máquina sin git imprimía 36 "ok" y se iba con exit 2 sin llegar
+# al resumen -- que se lee casi igual que un banco que ha pasado.
+command -v git >/dev/null 2>&1 || { echo "hace falta git: los casos del hook entero crean un repo de mentira" >&2; exit 2; }
 
 # --- Extraer la sección 4 del hook real -------------------------------------
 BLOQUE=$(awk '
@@ -60,15 +73,15 @@ trap 'rm -rf "$TMP"' EXIT
 # seguiria verde, cuando en el hook real aborta la ejecucion entera y deja al agente sin
 # nada. Lo senalo la auditoria del 6-sep-2026.
 printf 'set -uo pipefail\n%s\n' "$BLOQUE" > "$TMP/sobre.sh"
-
 # --- Ejecutar la sección con unas entradas dadas ----------------------------
 # Deja en $TMP/entregado.txt el additionalContext tal cual lo recibiría el agente
 # (fichero vacío si el hook decide no emitir nada) y en $TMP/salida.json el JSON.
 correr() {
-  local salida="$1" degradado="$2" maximo="${3:-10000}" presupuesto="${4:-25}"
+  local salida="$1" degradado="$2" maximo="${3:-10000}" presupuesto="${4:-25}" ultima_repo="${5:-}" cola="${6:-}"
   : > "$TMP/entregado.txt"; : > "$TMP/salida.json"; : > "$TMP/error.txt"
   LC_ALL="${LOCALE_PRUEBA:-}" \
   SALIDA="$salida" DEGRADADO="$degradado" MAX_CHARS_TOTAL="$maximo" PRESUPUESTO="$presupuesto" \
+  ULTIMA_REPO="$ultima_repo" COLA_BITACORA="$cola" \
     bash "$TMP/sobre.sh" > "$TMP/salida.json" 2>"$TMP/error.txt"
   RC=$?
   # El estado de salida SE MIRA y el stderr SE GUARDA. Mandandolos a /dev/null, "no ha
@@ -344,6 +357,250 @@ if [ -z "$ENTREGADO" ]; then
 else
   mal "registro vacío: no se emite nada (comportamiento de hoy)" "ha emitido ${#ENTREGADO} caracteres"
 fi
+
+# ============================================================================
+# systemMessage: la entrada que se nombra es la DE ESTE REPO
+# ============================================================================
+# Desde que el cuerpo de la bitácora del repo va al FINAL del registro (sección 2z), el
+# primer '## ' de $SALIDA en un repo de flota ya no es suyo: es el de la bitácora de
+# INFRAESTRUCTURA, que se compone antes. Si la sección 4 lo dedujera del sobre —como
+# hacía hasta el 6-sep-2026, acertando solo porque el cuerpo del repo iba primero—, lo
+# único que Oscar ve en la interfaz nombraría una entrada de servidores al abrir un repo.
+# Por eso la sección 1 se la pasa en $ULTIMA_REPO. Este caso sujeta esa decisión.
+correr "## 2026-09-06 - entrada de la bitacora de FLOTA
+cuerpo de flota.
+
+=== BITACORA DEL REPO: ejemplo ===
+## 2026-09-05 - entrada DEL REPO
+" "" 10000 25 "2026-09-05 - entrada DEL REPO"
+RESU=$(node -e 'const fs=require("fs");console.log(JSON.parse(fs.readFileSync(process.argv[1],"utf8")).systemMessage)' "$TMP/salida.json" 2>/dev/null)
+case "$RESU" in
+  *"entrada DEL REPO"*) ok "systemMessage nombra la entrada del REPO, no la de flota" ;;
+  *) mal "systemMessage nombra la entrada del REPO, no la de flota" "dice: $RESU" ;;
+esac
+# Y sin $ULTIMA_REPO se sigue deduciendo del sobre: es el caso de la sesión que no arranca
+# en ningún repo (solo flota), donde deducirlo SÍ acierta. Si el respaldo desapareciera,
+# ese arranque se quedaría sin titular y nadie lo notaría.
+correr "## 2026-09-06 - unica entrada, sin repo
+cuerpo.
+" "" 10000
+RESU=$(node -e 'const fs=require("fs");console.log(JSON.parse(fs.readFileSync(process.argv[1],"utf8")).systemMessage)' "$TMP/salida.json" 2>/dev/null)
+case "$RESU" in
+  *"unica entrada, sin repo"*) ok "sin ULTIMA_REPO, el titular se deduce del sobre (respaldo)" ;;
+  *) mal "sin ULTIMA_REPO, el titular se deduce del sobre (respaldo)" "dice: $RESU" ;;
+esac
+
+# ============================================================================
+# CUANDO EL RECORTE PASA DE LARGO LA BITÁCORA Y LLEGA A LOS AVISOS
+# ============================================================================
+# La sección 2z pone la bitácora al final para que sea ELLA la que absorba el recorte.
+# Eso se cumple mientras el prefijo de avisos quepa en el hueco — y hay arranques reales
+# en los que no cabe (el log del 6-sep tiene uno con 22.548 bytes de sobre y ~12.000 de
+# prefijo). En esa rama el aviso de corte de siempre —«está en la BITACORA.md del repo»—
+# es FALSO: lo que se ha perdido son avisos que no están en ninguna BITACORA.md. Estos
+# dos casos son la rama que el arreglo NO cubría y que la auditoría del 6-sep señaló:
+# el de abajo comprueba que se dice, y el de arriba que NO se dice cuando no toca.
+COLA_PRUEBA="=== BITACORA DEL REPO: ejemplo ===
+## 2026-09-06 - entrada
+"
+i=0
+while [ "$i" -lt 200 ]; do
+  COLA_PRUEBA="${COLA_PRUEBA}cuerpo de la bitacora, linea $i
+"
+  i=$((i+1))
+done
+AVISOS_PRUEBA="=== AVISO QUE NO ESTA EN NINGUN OTRO SITIO ===
+"
+i=0
+while [ "$i" -lt 40 ]; do
+  AVISOS_PRUEBA="${AVISOS_PRUEBA}aviso irrepetible numero $i
+"
+  i=$((i+1))
+done
+
+# El corte se queda DENTRO de la cola: el aviso de siempre basta y el extra no debe salir.
+correr "${AVISOS_PRUEBA}${COLA_PRUEBA}" "" 3000 25 "" "$COLA_PRUEBA"; leer
+espera_si   "corte dentro de la cola: avisa de que ha recortado"      "[CORTADO:"
+espera_si   "corte dentro de la cola: los avisos llegan enteros"      "aviso irrepetible numero 39"
+espera_no   "corte dentro de la cola: NO dice que haya mordido avisos" "CORTADO HASTA LOS AVISOS"
+espera_cabe "corte dentro de la cola: lo entregado cabe"              3000
+
+# El corte pasa de largo la cola y entra en los avisos: hay que DECIRLO.
+# EL MÁXIMO ES 1.000 Y NO MENOS, a propósito: es el suelo que la garantía de esta sección
+# declara ("lo entregado cabe mientras MAX_CHARS_TOTAL sea de 1.000 para arriba"). Por
+# debajo no caben ni la cabecera ni el pie ni el aviso, y eso ya no es problema del
+# recorte. Probar en el borde documentado es lo que tumbó el primer intento de este
+# candado, que añadía texto en vez de sustituirlo.
+correr "${AVISOS_PRUEBA}${COLA_PRUEBA}" "" 1000 25 "" "$COLA_PRUEBA"; leer
+espera_si   "corte en los avisos: lo dice"                            "CORTADO HASTA LOS AVISOS"
+espera_si   "corte en los avisos: y dice que eso no está en ningún sitio" "no está escrito en"
+espera_cabe "corte en los avisos: lo entregado SIGUE cabiendo"        1000
+RESU=$(node -e 'const fs=require("fs");console.log(JSON.parse(fs.readFileSync(process.argv[1],"utf8")).systemMessage)' "$TMP/salida.json" 2>/dev/null)
+case "$RESU" in
+  *"recortada hasta los avisos"*) ok "corte en los avisos: el systemMessage también lo dice" ;;
+  *) mal "corte en los avisos: el systemMessage también lo dice" "dice: $RESU" ;;
+esac
+
+# ============================================================================
+# EL ORDEN DEL SOBRE — sobre el HOOK ENTERO, no sobre la sección 4 sola
+# ============================================================================
+# Todo lo de arriba prueba dónde CORTA el recorte. Esto prueba QUÉ le toca ser cortado,
+# que es una decisión distinta y vive en otro sitio: en el orden en que las secciones
+# 0..2z llenan $SALIDA. La sección 4 aislada no puede verlo —se le entrega $SALIDA ya
+# compuesta—, así que aquí se corre el hook REAL contra un repo de mentira.
+#
+# El fallo que estos casos sujetan, medido en vivo el 6-sep-2026 en bitacora-project con
+# la conf desviada: el cuerpo de la bitácora iba DELANTE, el recorte caía dentro de él, y
+# se perdían en silencio 4.190 bytes de avisos que no están escritos en ningún otro sitio
+# —auditoría de sesiones sin anotar, informe del sueño, deriva del CLAUDE.md y descuadre
+# de configuración—. Sobre completo 16.020 bytes, entregados 9.920.
+#
+# LA BITÁCORA ES LO ÚNICO RELEÍBLE del sobre: es un fichero que está ahí, y el propio
+# aviso de corte manda abrirlo. Por eso es lo que absorbe el recorte. Si alguien vuelve a
+# ponerla delante, estos casos dan rojo.
+FIXTURE="$TMP/repo"
+# Una bitácora deliberadamente enorme: tres entradas de ~9 KB. Lo que importa no es el
+# número, es que el cuerpo NO quepa en el sobre — si cupiera no habría recorte que
+# observar y estos casos pasarían sin probar nada.
+preparar_fixture() {
+  [ -d "$FIXTURE/.git" ] && return 0
+  mkdir -p "$FIXTURE" || return 1
+  git -C "$FIXTURE" init -q >/dev/null 2>&1
+  git -C "$FIXTURE" config user.email banco@ejemplo >/dev/null 2>&1
+  git -C "$FIXTURE" config user.name banco >/dev/null 2>&1
+  {
+    printf '# Bitácora — repo de mentira del banco\n\n---\n\n'
+    for n in 3 2 1; do
+      printf '## 2026-09-0%s — [banco] entrada de relleno %s\n' "$n" "$n"
+      i=0
+      while [ "$i" -lt 120 ]; do
+        printf 'relleno de la entrada %s, línea %s, para que el cuerpo no quepa en el sobre\n' "$n" "$i"
+        i=$((i+1))
+      done
+      printf '\n'
+    done
+  } > "$FIXTURE/BITACORA.md"
+  # Y una subcarpeta con bitácora propia: es un monorepo, o sea que la sección 1b entra.
+  # No es decorado -- sus entradas se componen ANTES que la cola, así que sus '## ' son
+  # los primeros del sobre. Es lo que hace falta para que el respaldo de $ULTIMA no
+  # acierte por casualidad: ver el caso del systemMessage más abajo.
+  mkdir -p "$FIXTURE/sub"
+  {
+    printf '# Bitácora — subcarpeta del repo de mentira\n\n---\n\n'
+    printf '## 2026-09-04 — [banco] entrada de la CARPETA, no del repo\n'
+    printf 'cuerpo corto de la carpeta.\n\n'
+  } > "$FIXTURE/sub/BITACORA.md"
+}
+
+# Corre el HOOK ENTERO contra el repo de mentira y deja el resultado donde lo dejan los
+# demás casos ($TMP/entregado.txt), para que leer() y las aserciones de arriba valgan
+# igual. La conf va DESVIADA ENTERA con BITACORA_CONF, y no con variables de entorno:
+# BITACORA_VISTO se asigna a pelo dentro de la conf, ANTES de los ${VAR:-default} del
+# hook, así que el entorno no la pisa y el banco escribiría en el marcador REAL de la
+# máquina. Engañó a dos sesiones el 6-sep-2026 antes de quedar escrito en alguna parte.
+correr_hook() {
+  local maximo="$1" desde="${2:-$FIXTURE}"
+  preparar_fixture
+  {
+    echo 'BITACORA_ETIQUETA="banco"'
+    echo 'BITACORA_FICHERO="BITACORA.md"'
+    echo 'BITACORA_CREAR_SI_FALTA="no"'
+    echo 'BITACORA_IGNORAR="*/node_modules/*"'
+    echo 'BITACORA_MAX_ENTRADAS=3'
+    echo 'BITACORA_FLOTA_SSH=""'
+    echo 'BITACORA_INDICE_REPOS=""'
+    echo 'BITACORA_ESTADO_REMOTO=""'
+    echo 'BITACORA_CLAUDE_CANONICO=""'
+    echo 'BITACORA_PRESUPUESTO=25'
+    echo "BITACORA_MAX_CHARS_TOTAL=$maximo"
+    echo "BITACORA_VISTO=\"$TMP/fx-visto\""
+    echo "BITACORA_LEIDO=\"$TMP/fx-leido\""
+    echo "BITACORA_RUTAS=\"$TMP/fx-rutas\""
+    echo "BITACORA_LOG=\"$TMP/fx-hook.log\""
+  } > "$TMP/conf-fixture"
+  : > "$TMP/entregado.txt"; : > "$TMP/salida.json"; : > "$TMP/error.txt"
+  ( cd "$desde" && printf '%s' '{"source":"startup","session_id":"banco","transcript_path":""}' \
+      | BITACORA_CONF="$TMP/conf-fixture" bash "$HOOK" ) > "$TMP/salida.json" 2>"$TMP/error.txt"
+  RC=$?
+  [ -s "$TMP/salida.json" ] || return 0
+  node -e '
+    const fs = require("fs");
+    const j = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+    fs.writeFileSync(process.argv[2], j.hookSpecificOutput.additionalContext);
+  ' "$TMP/salida.json" "$TMP/entregado.txt" 2>/dev/null
+}
+
+# Primero SIN recortar: para ver el orden limpio, y para MEDIR dónde empieza el cuerpo.
+correr_hook 999999; leer
+espera_vivo  "hook entero: no se muere"
+espera_si    "hook entero: llega el cuerpo de la bitácora"        "=== BITACORA DEL REPO: repo ==="
+espera_si    "hook entero: dice dónde ha ido el cuerpo"           "va AL FINAL de este registro"
+espera_antes "hook entero: el aviso de cómo anotar va DELANTE del cuerpo" \
+             "Para anotar aquí" "=== BITACORA DEL REPO: repo ==="
+espera_antes "hook entero: el renglón que dice dónde está va DELANTE del cuerpo" \
+             "va AL FINAL de este registro" "=== BITACORA DEL REPO: repo ==="
+RESU=$(node -e 'const fs=require("fs");console.log(JSON.parse(fs.readFileSync(process.argv[1],"utf8")).systemMessage)' "$TMP/salida.json" 2>/dev/null)
+case "$RESU" in
+  *"entrada de relleno 3"*) ok "hook entero: systemMessage nombra la entrada más reciente del repo" ;;
+  *) mal "hook entero: systemMessage nombra la entrada más reciente del repo" "dice: $RESU" ;;
+esac
+
+# Y ahora CON el recorte mordiendo dentro del cuerpo. EL MÁXIMO NO SE ESCRIBE A MANO: se
+# mide dónde empieza el cuerpo en la pasada de arriba y se le deja medio kilobyte más. Un
+# número puesto a mano aquí dependería de cuántos avisos tenga la máquina donde se corra
+# —el informe del sueño, la deriva del CLAUDE.md, el descuadre de configuración: ninguno
+# sale del repo de mentira, salen del entorno—, y el caso saldría verde por casualidad en
+# una máquina y rojo por casualidad en otra.
+# Los 500 no son un número redondo cualquiera: tienen que dar para el pie (25), el aviso
+# de corte (217) y la línea del cuerpo que se quiere ver llegar. Quedan ~250 de holgura,
+# que es lo que absorbe un bloque degradado pequeño si el auditor de la sección 1c se pasa
+# de tiempo entre una pasada y la otra. Si algún día esto da rojo sin que nada se haya
+# roto, el sitio donde mirar es este.
+PREFIJO="${ENTREGADO%%"=== BITACORA DEL REPO: repo ==="*}"
+APRETADO=$(( $(printf '%s' "$PREFIJO" | wc -c | tr -d ' ') + 500 ))
+correr_hook "$APRETADO"; leer
+espera_vivo  "máximo apretado: no se muere"
+espera_cabe  "máximo apretado: lo entregado cabe"                 "$APRETADO"
+espera_si    "máximo apretado: el recorte muerde"                 "[CORTADO"
+espera_si    "máximo apretado: SOBREVIVE el aviso de cómo anotar" "Para anotar aquí"
+espera_si    "máximo apretado: SOBREVIVE el renglón que dice dónde está el cuerpo" \
+             "va AL FINAL de este registro"
+espera_antes "máximo apretado: lo cortado es el CUERPO, que va el último" \
+             "Para anotar aquí" "[CORTADO"
+
+# El monorepo: la única forma sin red de que el respaldo de $ULTIMA se equivoque. Los
+# casos de arriba entregaban $ULTIMA_REPO por entorno (o corrían en un repo sin nada
+# delante), así que BORRANDO la línea que la llena en la sección 1 el banco seguía verde:
+# un caso que pasa igual sin la pieza que dice probar. Lo cazó la auditoría del 6-sep.
+# Abriendo la sesión en la subcarpeta, la sección 1b compone SUS entradas antes que la
+# cola, y el `grep -m1 '^## '` de respaldo se lleva la de la CARPETA. Si el titular dice
+# «entrada de relleno 3» es porque la sección 1 se lo ha pasado; si dice «entrada de la
+# CARPETA», es que la línea ya no está.
+correr_hook 999999 "$FIXTURE/sub"; leer
+espera_vivo "monorepo: no se muere"
+espera_si   "monorepo: entra la bitácora de la CARPETA (si no, el caso no prueba nada)" \
+            "entrada de la CARPETA, no del repo"
+espera_antes "monorepo: la carpeta va DELANTE de la cola del repo" \
+             "entrada de la CARPETA, no del repo" "=== BITACORA DEL REPO: repo ==="
+RESU=$(node -e 'const fs=require("fs");console.log(JSON.parse(fs.readFileSync(process.argv[1],"utf8")).systemMessage)' "$TMP/salida.json" 2>/dev/null)
+case "$RESU" in
+  *"entrada de relleno 3"*) ok "monorepo: el systemMessage nombra la entrada del REPO, no la de la carpeta" ;;
+  *) mal "monorepo: el systemMessage nombra la entrada del REPO, no la de la carpeta" "dice: $RESU" ;;
+esac
+
+# Y fuera de todo repo, que es el camino por el que `set -u` puede matar el hook entero.
+# La sección 1 no corre, así que $COLA_BITACORA no se llena; si alguien mueve su
+# inicialización junto a donde se llena —que es lo que pide la intuición—, la pega de la
+# sección 2z aborta con "unbound variable" y Claude Code no recibe NADA. Eso se lee igual
+# que si el hook no existiera, que es el fallo fundacional de este proyecto. Aquí no se
+# comprueba qué llega (fuera de un repo y sin índice ni flota puede no haber nada que
+# contar, y eso es correcto): se comprueba que NO SE MUERE.
+correr_hook 10000 "$TMP"
+espera_vivo "fuera de un repo: el hook no se muere aunque la sección 1 no corra"
+case "$(cat "$TMP/error.txt" 2>/dev/null)" in
+  *"unbound variable"*) mal "fuera de un repo: sin variables sin definir" "$(head -c 160 "$TMP/error.txt")" ;;
+  *) ok "fuera de un repo: sin variables sin definir" ;;
+esac
 
 echo
 echo "casos: $N — pasan: $PASA — fallan: $FALLA"
