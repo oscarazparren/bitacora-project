@@ -497,6 +497,13 @@ if [ -n "$FLOTA_SSH" ] && [ -n "$INDICE_REPOS" ]; then
       # git nunca lleva `..`, y el cerrojo cuesta una comparación.
       $1=="E" {
         est[$2]=$3
+        # `est` se sobrescribe siempre y `refsrv` solo cuando la línea trae ref: con dos
+        # filas del mismo repo, una con ref y otra sin, el ref de la primera acabaría
+        # emparejado con el SHA de la segunda. Hoy ninguno de los dos escritores puede
+        # repetir un repo (el receptor escribe desde un diccionario y el sembrador desde
+        # nombres únicos), pero TODO esto se apoya en que el ref y el SHA vengan del
+        # MISMO push, y esta es la única línea donde esa premisa se puede romper.
+        delete refsrv[$2]
         for (k = 5; k <= NF; k++)
           if ($k ~ /^refs\/heads\/./ && $k !~ /\.\./) { refsrv[$2]=$k; break }
         next
@@ -534,8 +541,16 @@ if [ -n "$FLOTA_SSH" ] && [ -n "$INDICE_REPOS" ]; then
           # repos de la cuenta (41 main y 4 master, contados el 6-sep); está para
           # que un repo cuya rama por defecto sea otra no acabe en un PENDIENTE
           # perpetuo, que es un aviso que nadie puede apagar.
+          # main y master ya están resueltos ahí arriba: volver a pedirlos sería una
+          # tercera pasada entera a packed-refs POR REPO —y en un repo con todos los
+          # refs empaquetados eso no es un open de más—, para el 100 % de los repos de
+          # hoy. El presupuesto del hook va por 24 s de 25.
           rs = ""
-          if (n in refsrv) rs = refsha(gd, base, refsrv[n])
+          if (n in refsrv) {
+            if      (refsrv[n] == "refs/heads/main")   rs = m1
+            else if (refsrv[n] == "refs/heads/master") rs = m2
+            else                                       rs = refsha(gd, base, refsrv[n])
+          }
           # Cuatro estados, nunca colapsados: "no se pudo leer" NO es "al día".
           if (h == "" && m1 == "" && m2 == "" && rs == "") { print "NOSESABE\t" n "\t" p; continue }
           if (est[n] == h || est[n] == m1 || est[n] == m2 || est[n] == rs) print "ALDIA\t" n

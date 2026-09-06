@@ -273,10 +273,23 @@ espera "20a ref remoto en la columna -> PENDIENTE" \
   "PENDIENTE${TAB}fetchado${TAB}$R/repos/fetchado" "$O"
 espera_no "20b y nunca AL DÍA" "ALDIA" "$O"
 
-# --- 21. ref que no existe en el clon y nada más que leer -> NO SE SABE ------
-# La guarda de "no se pudo leer no es al día" tiene que cubrir también el ref.
-O=$(printf 'E roto 1111111111111111111111111111111111111111 2026-09-06T12:00:00+00:00 refs/heads/main\nL roto\n' | clasifica)
-espera "21  ref dado, .git sin refs -> NO SE SABE" "NOSESABE${TAB}roto${TAB}$R/repos/roto" "$O"
+# --- 21. la guarda de NO SE SABE, por sus dos lados ---------------------------
+# 21a: un ref que tampoco se puede leer no salva un .git ilegible. OJO: aquí NO
+# vale poner refs/heads/main, que es lo que ponía la primera versión de este caso:
+# main es literalmente m1, así que pasaba igual con la guarda nueva y sin ella.
+# Tiene que ser una rama que no sea ninguno de los tres candidatos de siempre.
+O=$(printf 'E roto 1111111111111111111111111111111111111111 2026-09-06T12:00:00+00:00 refs/heads/trunk\nL roto\n' | clasifica)
+espera "21a ref ilegible y .git sin refs -> NO SE SABE" "NOSESABE${TAB}roto${TAB}$R/repos/roto" "$O"
+
+# 21b: y el otro lado, que es el que la guarda existe para PERMITIR. HEAD apunta a
+# una rama que no existe y no hay main ni master, así que h, m1 y m2 son los tres
+# vacíos: lo único legible es la rama que nombra el servidor. Sin el término
+# `rs == ""` en la guarda, esto saldría NO SE SABE teniendo el dato delante.
+S21=$(crear "$R/repos/solotrunk")
+git -C "$R/repos/solotrunk" branch -m trunk
+printf 'ref: refs/heads/noexiste\n' > "$R/repos/solotrunk/.git/HEAD"
+O=$(printf 'E solotrunk %s 2026-09-06T12:00:00+00:00 refs/heads/trunk\nL solotrunk\n' "$S21" | clasifica)
+espera "21b HEAD roto y sin main, pero el ref del servidor sí se lee -> AL DÍA" "ALDIA${TAB}solotrunk" "$O"
 
 # --- 22. el ref no puede sacar la lectura de su .git -------------------------
 # El valor llega por la red. Un ref con '..' compone una ruta hacia arriba, y
@@ -287,10 +300,24 @@ espera "21  ref dado, .git sin refs -> NO SE SABE" "NOSESABE${TAB}roto${TAB}$R/r
 S22=$(crear "$R/repos/escape")
 printf '%s\n' "$S22" > "$R/repos/escape/trampa"
 git -C "$R/repos/escape" commit -q --allow-empty -m "el clon avanza"
+# Y con aserción POSITIVA, no solo con la negativa: `espera_no` da verde si el awk
+# no imprime NADA, así que el caso más sensible del banco pasaría en verde ante
+# cualquier cosa que tumbase el awk entero. Lo señaló la auditoría del 6-sep.
 O=$(printf 'E escape %s 2026-09-06T12:00:00+00:00 refs/heads/../../../trampa\nL escape\n' "$S22" | clasifica)
-espera_no "22  ref con .. no lee fuera del .git" "ALDIA" "$O"
+espera "22a ref con .. no lee fuera del .git" "PENDIENTE${TAB}escape${TAB}$R/repos/escape" "$O"
+espera_no "22b y nunca AL DÍA" "ALDIA" "$O"
 
-# --- 23. coste: ni un proceso por repo ---------------------------------------
+# --- 23. dos filas del mismo repo: el ref no se queda pegado -----------------
+# `est` se sobrescribe en cada linea `E` y `refsrv` solo cuando la linea trae ref.
+# Sin el `delete refsrv[$2]`, el ref de la primera fila se empareja con el SHA de
+# la segunda, y aqui eso sale como un AL DIA fabricado: la segunda fila no dice de
+# que rama es su SHA, pero se compara contra la rama que decia la primera.
+# Ningun escritor de hoy puede repetir un repo; el caso existe porque TODO el
+# cambio se apoya en que el ref y el SHA vengan del MISMO push.
+O=$(printf 'E solotrunk %s f refs/heads/trunk\nE solotrunk %s f\nL solotrunk\n' "$S21" "$S21" | clasifica)
+espera "23  ref de una fila + SHA de otra -> NO SE SABE, no AL DIA"   "NOSESABE${TAB}solotrunk${TAB}$R/repos/solotrunk" "$O"
+
+# --- 24. coste: ni un proceso por repo ---------------------------------------
 # La sección 0 se reescribió una vez porque costaba 41 s con 40 repos lanzando
 # dos awk por repo. Aquí se comprueba que sigue siendo UNA pasada.
 { printf 'E aldia %s\n' "$S1"; for i in $(seq 1 60); do printf 'L aldia\n'; done; } > "$TMP/muchos"
@@ -298,9 +325,9 @@ INI=$(date +%s)
 awk -v home="$R" -f "$TMP/indice.awk" "$TMP/muchos" > /dev/null
 SEGS=$(( $(date +%s) - INI ))
 if [ "$SEGS" -le 5 ]; then
-  printf '  ok    23 60 repos en %ss (una sola pasada de awk)\n' "$SEGS"; PASA=$((PASA + 1))
+  printf '  ok    24 60 repos en %ss (una sola pasada de awk)\n' "$SEGS"; PASA=$((PASA + 1))
 else
-  printf '  FALLA 23 60 repos tardaron %ss: eso huele a un proceso por repo\n' "$SEGS"
+  printf '  FALLA 24 60 repos tardaron %ss: eso huele a un proceso por repo\n' "$SEGS"
   FALLA=$((FALLA + 1))
 fi
 

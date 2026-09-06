@@ -96,17 +96,68 @@ def firma_valida(cuerpo, cabecera):
     return hmac.compare_digest(esperado, cabecera)
 
 
+def campo_limpio(valor, tope):
+    """Texto sin los delimitadores del fichero, sin caracteres de control y sin `..`."""
+    if not isinstance(valor, str) or not valor or len(valor) > tope:
+        return False
+    if ".." in valor:
+        return False
+    # El tabulador y el salto de línea son los delimitadores de estado.txt; el resto de
+    # caracteres de control no pintan nada y son justo lo que se usa para colar cosas.
+    return all(c >= " " and c != "\x7f" for c in valor)
+
+
+def payload_bien_formado(repo, sha, ref):
+    """Los tres campos que acaban en estado.txt. Devuelve cuál falla, o "" si van bien.
+
+    TODA ENTRADA ES HOSTIL HASTA QUE SE VALIDA EN EL BORDE, Y EL BORDE ES ESTE. Lo que
+    aquí se acepte se escribe tal cual en un fichero de columnas separadas por TABULADOR
+    y filas separadas por SALTO DE LÍNEA: un valor que traiga uno de los dos parte la
+    fila en dos e inventa una fila entera para el repo que le apetezca a quien la mande.
+    Hace falta una firma HMAC válida para llegar hasta aquí, así que esto no es una
+    puerta abierta; lo que hace es que el secreto valga para lo que dice la cabecera de
+    este fichero —mandar avisos falsos de "algo ha cambiado"— y no para escribir en el
+    índice de otro repo.
+      NO SE DELEGA EN EL CLIENTE, que también tiene su cerrojo: vive en otra máquina y se
+    despliega por separado, que es el mismo argumento por el que las columnas de este
+    fichero se identifican por su valor y no por su posición. El suyo es la segunda línea.
+      Y NADA DE LO QUE SE RECHAZA AQUÍ EXISTE EN UN AVISO LEGÍTIMO: los nombres de repo de
+    GitHub son [A-Za-z0-9._-] y los de rama de git no admiten caracteres de control, ni
+    espacios, ni `..`. Importa tanto como lo otro: un filtro que descarte de más congela
+    la fila de ese repo, y una fila congelada se lee igual que un dato fresco.
+    """
+    if not campo_limpio(repo, 100) or "/" in repo or repo.startswith("#"):
+        return "repo"
+    # OJO: aquí NO se exige refs/heads/. Un push de etiqueta trae un ref legítimo
+    # (refs/tags/v1.0) y responderle 400 le diría a GitHub que la entrega falló, con su
+    # aspa roja, por un evento normal. Que el ref sea o no la rama que seguimos es una
+    # decisión de RELEVANCIA y se toma abajo, con un 200. Aquí solo se mira la FORMA.
+    #   Y con la forma basta para lo que este cerrojo protege: al fichero solo llega un
+    # ref que sea exactamente igual a "refs/heads/" + la rama por defecto, así que un
+    # default_branch envenenado con un tabulador tendría que venir acompañado de un ref
+    # igual de envenenado, y ese no pasa de aquí.
+    if not campo_limpio(ref, 250):
+        return "ref"
+    if not campo_limpio(sha, 64) or not all(c in "0123456789abcdefABCDEF" for c in sha):
+        return "sha"
+    return ""
+
+
 def refs_que_se_siguen(datos):
     """Los refs cuyo push actualiza la fila del repo. Pura: entra el payload, sale lista.
 
-    Normalmente uno solo: la rama por defecto que declara el propio payload. El respaldo
-    a {main, master} es para el día que GitHub deje de mandar ese campo — preferimos
-    seguir la rama equivocada en un repo raro antes que dejar de seguir ninguna en todos,
-    que es la avería que no se ve.
+    Normalmente uno solo: la rama por defecto que declara el propio payload.
+
+    EL RESPALDO A {main, master} NO ES INOCUO, y conviene no contarse un cuento: si
+    GitHub dejara de mandar ese campo, un repo cuya rama por defecto sea otra deja de
+    seguirse ENTERO —no es que se siga la rama equivocada, es que no se sigue ninguna— y
+    su fila se congela para siempre. Eso lo ve el cliente como un descuadre que ningún
+    pull apaga, o sea la misma avería que este filtro viene a matar. Por eso quien llama
+    avisa a gritos cuando se cae aquí: ver do_POST.
     """
     repositorio = datos.get("repository") or {}
     rama = repositorio.get("default_branch") or repositorio.get("master_branch") or ""
-    if rama:
+    if isinstance(rama, str) and rama:
         return ["refs/heads/" + rama]
     return ["refs/heads/main", "refs/heads/master"]
 
@@ -212,11 +263,23 @@ class Receptor(BaseHTTPRequestHandler):
             log(f"ERROR payload de push ilegible: {e}")
             return self.responder(400, "payload ilegible")
 
+        mal = payload_bien_formado(repo, sha, ref)
+        if mal:
+            log(f"RECHAZADO campo {mal} con forma invalida en un push de {repr(repo)[:60]}")
+            return self.responder(400, "campo invalido")
+
         # Solo la rama por defecto. Un push a una rama de trabajo NO es la punta del
         # repo, y guardarlo como si lo fuera es la avería del 6-sep (ver la cabecera).
         # Se responde 200 —para GitHub la entrega fue bien y no hay nada que reintentar—
         # pero se deja dicho en el journal cuál se ignoró y cuál se sigue.
         seguidos = refs_que_se_siguen(datos)
+        if len(seguidos) > 1:
+            # Se cayó al respaldo: el payload no declaró rama por defecto. Se dice con su
+            # propia palabra y no como un `ignorado` más, porque lo que está en juego es
+            # distinto: si la rama por defecto de este repo no fuera main ni master, su
+            # fila no volvería a actualizarse NUNCA y el cliente la vería descuadrada sin
+            # poder apagarlo. Un `ignorado` es rutina; esto es una avería.
+            log(f"AVISO {repo}: el payload no trae default_branch, sigo main/master a ciegas")
         if ref not in seguidos:
             log(f"ignorado {repo} ref={ref or '(vacio)'} (se sigue {seguidos[0]})")
             return self.responder(200, "ignorado: no es la rama por defecto")

@@ -82,8 +82,9 @@ lee a pelo con `getline`. Dos cosas quedan cerradas por la forma del valor:
 
 ### 4. Los bancos, y que muerden
 
-`scripts/probar-indice-clon.sh` pasa de 22 casos a **34**, y el receptor **estrena banco**:
-`scripts/probar-receptor-ref.sh`, 28 casos. Ese era el agujero grande — el clasificador del
+`scripts/probar-indice-clon.sh` pasa de 22 casos a **37**, y el receptor **estrena banco**:
+`scripts/probar-receptor-ref.sh`, otros **37** (las cuentas finales, ya con lo que añadió la
+auditoría del apartado 7). Ese era el agujero grande — el clasificador del
 cliente tenía banco desde esta mañana y **la pieza que se despliega a un servidor no tenía
 ninguno**, que es justo donde un fallo no se ve: no hay pantalla, el journal no lo lee
 nadie, y el síntoma sale días después y en otra máquina.
@@ -101,12 +102,14 @@ Comprobado que muerden, deshaciendo cada cosa en una copia:
 | no guardar el ref | 5 |
 | aceptar cualquier `refs/` y no solo `refs/heads/` | 3 |
 | quitar el cerrojo del `..` | 1 |
+| quitar la validación del borde (apartado 7) | **6**, y las filas inyectadas aparecen |
+| no limpiar `refsrv` entre filas | 1, y es un AL DÍA fabricado |
 
 Y uno de los casos nuevos **pasaba por el motivo equivocado**: el ref con `..` que escribí
 para probar el escape usaba `../../trampa`, que desde `refs/heads/` cae dentro de `.git` y
 no en la raíz del repo. Con el cerrojo y sin él daba lo mismo, o sea que no probaba nada;
-hacen falta tres niveles. Se vio al comprobar que mordía, no al escribirlo: **un caso que
-pasa no es un caso que prueba**.
+hacen falta tres niveles. Se vio al comprobar que mordía, no al escribirlo. **No fue el
+único: la auditoría encontró tres más, y están en el apartado 8.**
 
 El caso 11 del banco nuevo es de otro tipo y merece nombre propio: compara la cabecera que
 escribe el receptor con **la que escribe el sembrador, sacada de su propio `printf`**. Los
@@ -129,23 +132,131 @@ quién escribió el último. Nada más ponerlo falló — y tenía razón.
 - `sembrar-estado.sh --revisar` contra el servidor real después del cambio: sigue leyendo,
   sigue contando bien, y no hay nada que sembrar.
 
-### 6. El despliegue quedó a medias, y no por un fallo
+### 6. El despliegue, en dos tiempos
 
-El receptor nuevo está **subido y comprobado en el servidor**:
-`/opt/bitacora/receptor-webhook.py.nuevo`, md5 `e292f880…` idéntico al local, y compila con
-el python3 de allí. La copia de seguridad del anterior está en
-`/opt/bitacora/receptor-webhook.py.bak-20260906`.
+**Primer despliegue: 16:20:38 del 6-sep**, con la versión previa a la auditoría
+(md5 `e292f880…`). Comprobado en vivo y no en el resumen: `systemctl is-active` → `active`,
+el md5 del fichero instalado coincide, el `GET` contesta `receptor de bitacora vivo`, y el
+journal trae `escuchando en 127.0.0.1:8011` a esa hora. Lo lanzó Oscar a mano: el
+clasificador de permisos de la sesión bloquea escribir ficheros y reiniciar servicios en la
+máquina remota, y eso no es un error a depurar, es la barandilla haciendo su trabajo.
 
-**El `mv` y el `systemctl restart` los tiene que lanzar Oscar**: el clasificador de
-permisos de esta sesión bloquea escribir ficheros y reiniciar servicios en la máquina
-remota. No es un error a depurar, es la barandilla haciendo su trabajo. Se anota porque
-**hasta que eso se ejecute sigue corriendo el receptor viejo, y el fallo de arriba sigue
-vivo**.
+**Segundo despliegue pendiente**, con la versión endurecida por la auditoría (md5
+`331fd9d4…`, ya subida y compilada allí como `receptor-webhook.py.nuevo`). Hasta que se
+lance, lo que corre arregla el fallo de la rama pero **no** lleva la validación del borde
+del apartado siguiente.
 
-Mientras tanto no hay nada a medias: el cliente nuevo lee sin problema las filas sin ref
-(comprobado con el hook entero), y el receptor viejo escribe filas que el cliente nuevo
-entiende. Los dos lados son compatibles en las dos direcciones, que es justo lo que
-permitía desplegarlos por separado.
+### 7. La auditoría, otra vez, y esta vez con una vulnerabilidad de verdad
+
+Veredicto: **pasa con reparos**. Confirmó lo que importaba —que la puerta al falso «al día»
+sigue cerrada, que ninguna variable del `awk` se arrastra entre repos, y que la
+compatibilidad va en las dos direcciones—, y encontró siete cosas. La primera es de otra
+categoría:
+
+**EL RECEPTOR ESCRIBÍA EN `estado.txt` TRES CAMPOS DEL PAYLOAD SIN MIRARLOS.** El fichero
+son columnas separadas por TABULADOR y filas separadas por SALTO DE LÍNEA. Un
+`default_branch` con un `\n` y un `\t` dentro no corrompe la fila: **fabrica una fila nueva
+entera para el repo que quiera quien la mande**, y el cliente se la cree. Hace falta una
+firma HMAC válida para llegar ahí, así que no es una puerta abierta — lo que hace es que el
+secreto valga para lo que dice la cabecera del receptor («mandar avisos falsos de algo ha
+cambiado») y no para escribir en el índice de cualquier repo. **Y era previo a este cambio**
+para `repository.name`; lo de hoy solo añadía un campo más sin mirar.
+
+Lo demoledor del hallazgo es dónde estaba el cerrojo: **en el cliente, en la otra máquina,
+desplegado por separado** — que es exactamente el argumento que este mismo commit usa para
+no fiarse de la posición de las columnas. Ahora la comprobación está en el borde, donde
+manda la biblia, y la del cliente se queda como segunda línea. El banco lo pincha con el
+ataque de verdad, no con una aproximación: **sin la validación, las filas inyectadas
+aparecen en el fichero** y caen 6 casos.
+
+**Y arreglándolo me pasé, en el sentido caro.** La primera versión exigía que el ref fuera
+`refs/heads/…` y respondía 400 a un push de etiqueta — que es un evento legítimo, con su
+aspa roja en la interfaz de GitHub. Confundía **forma** con **relevancia**: que el valor
+esté bien formado se comprueba en el borde y se responde 400; que sea o no la rama que
+seguimos es una decisión de negocio y se responde 200. Lo destapó el propio banco (el caso 3
+pasó de `ignorado` a `400`), no la lectura. Un filtro que descarta de más congela la fila de
+ese repo, y una fila congelada se lee igual que un dato fresco: la avería de siempre, otra
+vez, entrando por el arreglo.
+
+Lo demás que entró de la auditoría:
+
+- **El docstring del respaldo mentía.** Prometía «seguir la rama equivocada antes que no
+  seguir ninguna», y hacía justo lo contrario: si faltara `default_branch`, un repo con rama
+  por defecto distinta de main/master deja de seguirse **entero**. Corregido el texto, y
+  ahora ese camino grita con su propia palabra (`AVISO`) en vez de confundirse con un
+  `ignorado` de rutina, que es lo que pasa cien veces al día.
+- **`refs_que_se_siguen()` reventaba con un `default_branch` que no fuera texto**, y encima
+  fuera del `try` que tiene el camino de error escrito.
+- **`refsrv[]` no se limpiaba** entre filas del mismo repo. Teórico —ningún escritor puede
+  repetir un repo hoy— pero es la única línea donde se puede romper la premisa de todo esto,
+  que el ref y el SHA vengan del MISMO push. Con `delete` y **con un caso que lo prueba: sin
+  él sale un AL DÍA fabricado**.
+- **`rs` releía `main`/`master`** que `m1` y `m2` acababan de resolver: una tercera pasada a
+  `packed-refs` por repo, en el 100 % de los repos de hoy, con el presupuesto en 24 s de 25.
+
+### 8. Tres casos más que pasaban por el motivo equivocado
+
+Van cuatro en total en un día, contando el del apartado 4. Y no son descuidos distintos, es
+el mismo:
+
+- **El 21** decía probar la guarda nueva usando `refs/heads/main` — que es literalmente
+  `m1`, así que daba igual con guarda y sin ella. Ahora son dos casos: uno con una rama que
+  tampoco se puede leer (sigue NO SE SABE) y otro **que es el que la guarda existe para
+  permitir**: HEAD roto, sin main ni master, y solo legible la rama que nombra el servidor.
+- **El 22** —el único que prueba que un ref con `..` no lee fuera del `.git`— tenía **solo
+  aserción negativa**, y `espera_no` da verde si el `awk` no imprime nada. O sea que el caso
+  más sensible del banco habría pasado en verde ante cualquier cosa que tumbara el `awk`
+  entero. Ahora lleva la aserción positiva delante.
+- **El 12 del receptor** afirmaba que la doble entrega es idempotente y lo que comprobaba
+  era que la fila no cambia — que también se cumple si el segundo envío da 401 o se pierde.
+  Cubría la avería contraria a la que decía cubrir.
+
+La forma de la lección: **la aserción negativa sola no prueba nada**, porque el silencio la
+satisface. Y un caso que usa como entrada un valor que ya estaba en el camino viejo no
+prueba el camino nuevo.
+
+Los dos bancos quedan en **74 casos** (37 y 37), todos verdes, y cada cerrojo nuevo con al
+menos un caso que muerde: sin la validación del borde caen 6, sin el `delete` cae 1, sin el
+cerrojo de `refs/heads/` 3, sin el del `..` 1.
+
+### 9. Lo que se midió antes de desplegar, y evitó un trabajo entero
+
+La auditoría avisó de que el filtro arregla los pushes futuros pero **no cura las filas que
+el receptor viejo ya escribió con el SHA de una rama de trabajo**, y proponía un
+`--refrescar` en el sembrador. Antes de escribirlo se midió: se comparó fila a fila el
+`estado.txt` vivo contra la punta real de la rama por defecto de cada repo, con GraphQL.
+
+**Las 45 filas comparables cuadran. Cero envenenadas.** Así que no hace falta ningún paso de
+remedio, y de paso queda comprobado que los 9 clones descuadrados que sale avisando el
+índice lo están porque **los clones** van por detrás, no porque el dato del servidor sea
+malo. El agujero era real como mecanismo y no tenía ni un caso.
+
+Apareció de rebote una fila huérfana: `agente-arquitecto`, con dato de hoy a las 08:15, no
+está entre los 45 repos de la cuenta. O es de otro dueño o se renombró. Queda anotado abajo.
+
+### Queda abierto
+
+- **El segundo despliegue**, con la versión endurecida (apartado 6). Es lo único de esta
+  entrada que no está terminado.
+- **Cinco bancos y ninguna puerta que los lance.** `probar-{1d-deriva,
+  atribucion-transcripts,coste-auditor,indice-clon,receptor-ref}.sh` no los referencia ni
+  un hook, ni un script, ni nada: hay que acordarse a mano. Hoy son cinco; dentro de un mes
+  son cinco que nadie lanza. Un `scripts/probar-todo.sh` que los encadene y sume los
+  códigos de salida son seis líneas. Lo señaló la auditoría y no se ha hecho: no tocaba
+  meterlo en este cambio.
+- **Una fila huérfana en `estado.txt`**: `agente-arquitecto`, con dato real de hoy a las
+  08:15, no está entre los 45 repos de la cuenta `oscarazparren`. O tiene otro dueño o se
+  renombró. No estorba, pero es una fila que nadie va a actualizar nunca.
+- **Una pasada de `/security-review` al receptor**, que la pidió la auditoría y no se
+  puede lanzar desde dentro de la sesión. Es la única pieza del proyecto que escucha en un
+  socket, y la única que vive en la máquina donde están los `.env` de todos los agentes.
+  Lo de hoy cierra el camino que tocaba este cambio; la superficie entera no la ha mirado
+  nadie (el `MAX_CUERPO` frente a un `Content-Length` que mienta, qué pasa si `nginx`
+  dejara de estar delante, y el `0o644` del fichero de estado).
+- **El receptor es de un solo hilo, y eso es diseño, no descuido.** El ciclo
+  leer-modificar-escribir de `actualizar_estado()` pierde actualizaciones si alguien lo
+  cambia a `ThreadingHTTPServer` — y la doble entrega App + webhook lo pone a prueba todos
+  los días. No está dicho en el fichero.
 
 ### La lección
 
@@ -156,6 +267,18 @@ estaba el fallo. Ninguna de las tres se ve razonando; las tres se ven abriendo e
 la entrega y la cuenta. Es la misma lección que dejó escrita el PC viejo esta madrugada
 —«el fallo no fue de razonamiento sino de no mirar el artefacto»— aplicada esta vez
 **antes** de escribir el código en vez de después.
+
+Y la segunda, que es la de esta mañana repetida y por tanto escuece el doble: **el arreglo
+volvió a traer dentro el mismo fallo que venía a matar.** Esta mañana fue comparar contra
+vacío y llamarlo «al día»; esta tarde, un cerrojo puesto en el cliente —en la otra máquina,
+desplegada por separado— dentro de un cambio cuyo argumento central es precisamente que no
+se puede dar por hecho lo que haga el otro lado. Y una vez más lo encontró el revisor que
+llega sin contexto, no quien acababa de escribir el párrafo que lo explicaba.
+
+La tercera es del banco, y es nueva: **cuatro casos en un día pasaban por el motivo
+equivocado**, y ninguno se vio al escribirlos. Se vieron los cuatro al deshacer el arreglo
+a propósito para comprobar que el caso fallaba. Escribir el caso y verlo verde no es
+probar nada: **un caso solo prueba algo el día que se le ha visto fallar.**
 
 ## 2026-09-06 — [PC Nuevo] El índice de arranque dejaba de avisar en cuanto avisaba una vez: ahora mira el clon, no el marcador de «ya te lo dije» — y el arreglo traía dentro el mismo fallo
 

@@ -73,7 +73,13 @@ def esperar(puerto):
     return 1
 
 
+def hostil(valor):
+    """[NL] y [TAB] se expanden aqui, para que el .sh no lleve caracteres de control."""
+    return valor.replace("[NL]", chr(10)).replace("[TAB]", chr(9))
+
+
 def push(puerto, secreto, repo, sha, ref, rama, firmar):
+    repo, sha, ref, rama = hostil(repo), hostil(sha), hostil(ref), hostil(rama)
     payload = {"ref": ref, "after": sha, "repository": {"name": repo}}
     if rama != "-":
         payload["repository"]["default_branch"] = rama
@@ -286,8 +292,45 @@ fi
 # repo (BITACORA.md, 6-sep, [PC viejo]). Es a proposito, y tiene que dar lo mismo.
 push repo9 "$A" refs/heads/main main > /dev/null
 ANTES="$(campo repo9 2)|$(campo repo9 4)"
-push repo9 "$A" refs/heads/main main > /dev/null
-espera "12 el mismo push dos veces deja la misma fila" "$ANTES" "$(campo repo9 2)|$(campo repo9 4)"
+# La respuesta del segundo SI se mira: comparando solo la fila, el caso daria verde
+# tambien con un 401 o con el envio perdido, que es la averia contraria a la que
+# dice cubrir. Lo senalo la auditoria del 6-sep.
+R=$(push repo9 "$A" refs/heads/main main)
+contiene "12a el segundo envio se acepta igual que el primero" "200 ok" "$R"
+espera   "12b y deja la misma fila" "$ANTES" "$(campo repo9 2)|$(campo repo9 4)"
+
+# --- 14. LA VALIDACION DEL BORDE --------------------------------------------
+# estado.txt son columnas separadas por TABULADOR y filas separadas por SALTO DE
+# LINEA, y los tres campos que se escriben (repo, sha, ref) vienen del payload. Un
+# valor con uno de esos dos caracteres no corrompe la fila: fabrica UNA FILA NUEVA
+# para el repo que le apetezca a quien la mande, y el cliente se la cree.
+# Hace falta la firma HMAC para llegar aqui, asi que esto no es una puerta abierta:
+# es que el secreto valga para lo que dice la cabecera del receptor -avisos falsos
+# de "algo ha cambiado"- y no para escribir en el indice de cualquier repo.
+FILA=dddddddddddddddddddddddddddddddddddddddd
+R=$(push "repo1[NL]colado[TAB]$FILA[TAB]2026-01-01T00:00:00+00:00" "$A" refs/heads/main main)
+contiene "14a nombre de repo con salto de linea -> 400" "400" "$R"
+espera   "14b y NO aparece la fila inyectada" "(sin fila)" "$(campo colado 2)"
+
+# El vector de verdad, extremo a extremo: la rama por defecto y el ref van
+# envenenados LOS DOS, asi que coinciden entre si y pasan el filtro de relevancia.
+# Sin la validacion, esto escribe la fila 'colado2' en el fichero.
+R=$(push repo1 "$A" "refs/heads/main[NL]colado2[TAB]$FILA[TAB]2026-01-01T00:00:00+00:00" "main[NL]colado2[TAB]$FILA[TAB]2026-01-01T00:00:00+00:00")
+contiene "14c ref y rama envenenados a la vez -> 400" "400" "$R"
+espera   "14d y tampoco cuela por ahi" "(sin fila)" "$(campo colado2 2)"
+
+# Un SHA que no es un SHA. El cliente exige 40 hex para creerselo, asi que esto no
+# le enganaria; se rechaza igual porque es el mismo borde y cuesta lo mismo.
+R=$(push repo1 "no-soy-un-sha" refs/heads/main main)
+contiene "14e sha que no es hexadecimal -> 400" "400" "$R"
+espera   "14f y la fila buena sigue en su sitio" "$B" "$(campo repo1 2)"  # el caso 9 la dejo en $B
+
+# Y lo legitimo sigue pasando: un nombre de repo con guion y punto, que GitHub
+# permite. Un filtro que descarte de mas congela la fila de ese repo para siempre,
+# y una fila congelada se lee igual que un dato fresco.
+R=$(push "lizar-cuentas-claras.v2" "$B" refs/heads/main main)
+contiene "14g nombre legitimo con guion y punto -> ok" "200 ok" "$R"
+espera   "14h y se guarda"                            "$B"      "$(campo lizar-cuentas-claras.v2 2)"
 
 # --- 13. lo ignorado se dice en el journal ----------------------------------
 # Un push descartado en silencio es indistinguible de uno que nunca llego, y ese
