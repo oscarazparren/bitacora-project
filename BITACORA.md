@@ -11,6 +11,242 @@ Formato: `## AAAA-MM-DD — [dispositivo] titular`
 
 ---
 
+## 2026-09-06 — [PC Nuevo] El índice de arranque dejaba de avisar en cuanto avisaba una vez: ahora mira el clon, no el marcador de «ya te lo dije» — y el arreglo traía dentro el mismo fallo
+
+Lo encontró Oscar, y lo encontró de la peor manera posible: el arranque decía «sin
+movimiento en ninguno de los 43 repos vigilados» mientras este mismo repo estaba **12
+commits por detrás**, con `scripts/coste-sesiones.py` —el contable, del 04/09— sin llegar
+todavía al PC Nuevo.
+
+### 1. El fallo: un aviso que se consume al leerlo
+
+La sección 0 de `hooks/sessionstart-leer.sh` comparaba el SHA que el servidor conoce de
+cada repo (`estado.txt`, que mantienen los webhooks) contra `~/.claude/bitacora-visto`, el
+marcador de «esto ya te lo enseñé». Y ese marcador **lo reescribe la propia sección al
+final de cada arranque**. La secuencia completa es de manual:
+
+1. El repo se mueve en la otra máquina. El índice lo canta: «se ha movido».
+2. No haces el pull —estás en otra cosa, o el aviso se lo llevó una sesión que no leíste.
+3. El marcador ya se actualizó igualmente. Desde ese momento marcador == servidor.
+4. **El índice calla para siempre**, con el clon por detrás.
+
+Lo comprobado, no lo razonado: `bitacora-visto` tenía `bitacora-project` en `88b1d6d2`,
+que era exactamente la punta de `origin/main`. Por eso el titular era tranquilizador.
+
+Y el modo de fallo es peor que perder un aviso: **es indistinguible de la buena noticia.**
+«Sin movimiento en 43 repos» y «llevas 12 commits sin traer» se leían igual.
+
+Esto ya estaba diagnosticado a medias. `NOTAS-DE-CAMPO.md` tiene desde el 18-ago la nota
+«Un aviso que se consume al leerlo no es un aviso», que discutía *cuándo* consumir el
+marcador —al leer, o al acusar recibo— y dejaba el arreglo pendiente. Las dos opciones que
+se plantearon daban por bueno que el índice comparase contra un marcador. Ahí estaba el
+error de planteamiento.
+
+### 2. El arreglo: comparar contra el clon, que es lo que se quería saber
+
+Arreglo propuesto por Oscar y aplicado tal cual: se compara contra el `.git` del clon
+local. Eso no es una novedad que se gasta al enseñarla, es un **estado**, así que vuelve a
+salir en cada arranque hasta que cuadre de verdad.
+
+Cuenta como «al día» que el SHA del servidor sea **HEAD, `refs/heads/main` o
+`refs/heads/master`**. Las dos decisiones de esa lista están medidas, no elegidas a ojo:
+
+- **Solo HEAD no vale.** `ECC` estaba en `fix/dead-badrudi-video-link` con `main`
+  exactamente en la punta: comparando solo HEAD saldría descuadrado para siempre mientras
+  esa rama siguiera abierta, y un aviso permanente que no se puede resolver enseña a no
+  leer los avisos.
+- **Los refs remotos NO cuentan, a propósito.** `refs/remotes/origin/main` se pone al día
+  con un `fetch` mientras el árbol sigue por detrás: aceptarlo reintroduciría exactamente
+  el fallo que se está arreglando. `AlcoholTax-IA` estaba justo así.
+
+**No se dice la dirección.** Distinguir «por detrás» de «trabajo sin subir» necesita `git`,
+y `git` aquí cuesta un proceso por repo: ~0,4 s en Windows, ~17 s con 43, sobre un
+presupuesto de 25. «No coincide» cubre las dos y las dos piden lo mismo: ir y mirar. (De
+los 9 que salieron, 8 estaban por detrás y 1 —`AlcoholTax-IA`— tenía un commit sin subir.
+Se comprobó con git para escribir esto, no lo hace el hook.)
+
+**Y sigue sin lanzar ni un proceso**, que es la restricción que ya obligó a reescribir esta
+sección una vez (la versión con dos `awk` por repo costaba 41 s con 40 repos). Los refs se
+leen como ficheros desde el mismo `awk` que ya recorría la lista: `.git/HEAD`, el ref
+suelto, y `packed-refs` si el suelto no está — que no es un caso raro, `ECC` tiene **todos**
+los refs empaquetados. También resuelve `.git` cuando es un fichero (worktree), donde los
+refs viven en el directorio común.
+
+Medido: **0,15 s con 43 repos**, y el hook entero sigue en 19,8 s frente a los 19,6 s de
+antes. La salida inyectada pasó de 9.769 a 9.759 caracteres (la sección 0 sube de 105 a
+~880, y la sección 1 cede ese hueco sola).
+
+### 3. Lo que apareció al encenderlo: 9 de 43 repos descuadrados y mudos
+
+```
+AlcoholTax-IA  LIZAR-AIA-WEB  agentes-lizar  lizar-core  lizar-correo
+lizar-flota  lizar-informes  lizar-jarvis  lizar-panel
+```
+
+Ninguno de ellos estaba avisando. Ese es el tamaño real del agujero.
+
+### 4. Qué se ha quitado, y por qué no sobra nada
+
+Al comparar contra la verdad en vez de contra un histórico, tres mecanismos dejan de tener
+razón de ser y se van:
+
+- **`CAMBIADO`** (servidor != marcador). Lo cubre `PENDIENTE`, y sin el efecto secundario
+  de anunciar como novedad tus propios pushes.
+- **`NUEVO` y el bloque «ENTRAN HOY EN EL ÍNDICE»**. Existían para que ampliar `repos.txt`
+  no disparara 29 movimientos falsos de golpe. Con la comparación contra el clon el
+  problema no puede darse: un repo nuevo que esté al día sale al día. Su texto además
+  decía «de estos NO se sabe si se han movido», que ya sería falso.
+- **`ruta_local()`**. Su regla (primero `$RUTAS`, luego `$HOME/<n>`, `$HOME/repos/<n>`,
+  `$HOME/Desktop/<n>`) se ha movido dentro del `awk`, porque llamarla 43 veces son 43
+  procesos. Dejarla habría sido tener la misma regla escrita dos veces.
+
+`$VISTO` **se sigue escribiendo**, pero ya no decide nada: queda como registro de qué SHA
+tenía el servidor y cuándo se le preguntó — que es justo lo que permitió diagnosticar
+esto. Documentado así en `bitacora.conf.example`. Si alguna vez vuelve a aparecer una
+comparación contra él, es esta avería otra vez.
+
+Estados nuevos, sin colapsar ninguno: `PENDIENTE` / `AL DÍA` / `NO CLONADO AQUÍ` /
+`CLON ILEGIBLE` / `SIN DATOS`. «No se pudo leer el `.git`» **no** cuenta como «al día», y
+si el `awk` se cayera entero la sección lo dice con `saltado()` en vez de imprimir nada
+—que se leería como «todo en orden».
+
+### 5. Comprobado, no deducido
+
+- El resolutor de refs coincide **repo a repo con `git`** en los 43 vigilados reales.
+- Banco sintético con las ocho ramas: al día, por detrás, refs empaquetados, HEAD
+  desprendido, worktree (`.git` como fichero, con ruta `C:/...`), `.git` ilegible, repo sin
+  clonar, repo sin datos en el servidor. Más: repo recién inicializado sin commits
+  (→ `CLON ILEGIBLE`, correcto: no se sabe) y carpeta con **espacio** en el nombre mapeada
+  por `$RUTAS`.
+- Los cuatro titulares de la sección probados con recuentos forzados.
+- El hook completo ejecutado de punta a punta, con `$VISTO` y `$LEIDO` desviados a copias
+  para no tocar el estado real.
+
+### 6. El sueño ya corre en esta máquina — y montarlo destapó tres cosas
+
+`scripts/sueno.sh` no tenía tarea programada aquí. Registrada como `bitacora-sueno`, a
+diario a las 7:00. Y **comprobada mirando el artefacto**, no el estado de la tarea:
+`LastTaskResult` 0 y el informe `~/.claude/bitacora-suenos/2026-09-06.md` escrito por el
+Programador. Tarda 87 s a mano y 238 s lanzado por el Programador (prioridad de fondo).
+
+Lo que apareció por el camino, y las tres cosas son fallos silenciosos:
+
+1. **La tarea se registró y NO corría.** Estado «Listo», `LastTaskResult` 0, y en cada
+   disparo se quedaba «En cola» sin ejecutarse. Causa:
+   `New-ScheduledTaskSettingsSet` trae `DisallowStartIfOnBatteries=True` por defecto y esto
+   es un portátil, que estaba con batería. Sin error, sin log, y con toda la pinta de estar
+   montado. Arreglado con `-AllowStartIfOnBatteries -DontStopIfGoingOnBatteries`
+   (y `-StartWhenAvailable`, para que un 7:00 con el equipo apagado no se pierda sin más).
+2. **La cabecera del propio script mandaba sacar la ruta de bash con
+   `(Get-Command bash).Source`.** En esta máquina eso devuelve
+   `...\WindowsApps\bash.exe`, que es el **bash de WSL** (`x86_64-pc-linux-gnu`), no el de
+   Git (`cygwin`). Bajo WSL `~/repos` no existe y la tarea no habría repasado nada. La
+   cabecera ahora dice que se compruebe con `Test-Path`, mirando la ruta en vez de
+   preguntándole al `PATH`.
+3. **`$REPOS` era una cadena separada por espacios** y se recorría sin comillas en tres
+   sitios. En `~/repos` hay una carpeta llamada `OpenCo Desing`: el bucle la partía en dos
+   rutas inexistentes (`cd: .../OpenCo: No such file or directory` por stderr, que con
+   `--silencioso` y de madrugada no lee nadie), ese repo se quedaba sin auditar y encima
+   contaba doble en el total del cierre — decía 45 repos donde hay 44. Ahora es un array.
+   De paso, `--help` dejaba de imprimir la cabecera entera porque usaba un rango de líneas
+   fijo (`2,90p`) que caducó al crecer el texto; ahora se para donde se acaban los
+   comentarios.
+
+### 7. La auditoría encontró dos rojos en este mismo cambio, el mismo día
+
+El `auditor` corrió sobre el diff sin mi contexto, y no dio el visto bueno. Tenía razón
+en los dos casos, y los dos se comprobaron ejecutando el `awk` extraído del hook antes de
+tocar nada:
+
+- **ROJO — el SHA del servidor vacío salía «al día».** `if (est[n] == h || est[n] == m1 ||
+  est[n] == m2)`. En casi cualquier repo `m2` (`refs/heads/master`) vale `""`; si `est[n]`
+  llegaba vacío, `"" == ""` daba **ALDIA sin haber comparado nada**. La guarda de la línea
+  de al lado protegía el lado LOCAL («no se pudo leer no es al día») y dejaba el del
+  servidor abierto. **Es el mismo falso silencio que este cambio viene a matar, entrando
+  por la otra puerta**, y estaba escrito el mismo día. Arreglado: `est[n] == ""` →
+  `SIN DATOS`.
+- **Y cómo llega un SHA vacío sin que nadie escriba nada mal:** el `ssh` lleva `timeout` y
+  `|| true`, así que una lectura cortada a mitad de `estado.txt` deja la última línea sin
+  su SHA — y era **indistinguible de una lectura completa**. Ahora el volcado termina en
+  una marca `###FIN###` y, si no llega, se dice en la propia salida.
+- **ROJO/ÁMBAR — las rutas con espacios se cortaban al imprimirlas.** El `awk` emitía
+  `PENDIENTE <nombre> <ruta>` separando por espacio y el de fuera leía `$3`:
+  `/c/Users/Oscar/repos/OpenCo Desing` salía como `/c/Users/Oscar/repos/OpenCo`, **justo en
+  el renglón que le dice al agente «git -C \<ruta\> status -sb»**. Es exactamente el mismo
+  bug que esta sesión arreglaba en `sueno.sh`, vivo en el fichero de al lado y sin verlo.
+  Ahora el separador es TAB y los consumidores usan `awk -F'\t'`.
+
+Lo demás que entró de esa pasada: los topes de las listas bajan a 12/12/6 y los tres dicen
+cuántos dejan fuera (la sección 0 va la primera y el recorte global se come la cola, así
+que crecer aquí lo paga el final del sobre); el fallo del `awk` deja de publicarse bajo el
+titular «se agotó el presupuesto» —que mandaba a mirar el cronómetro cuando el problema no
+era el reloj— y tiene su propio bloque; y **`VISTO_ANTES` se borra**: copiaba un fichero en
+cada arranque para nadie desde que la sección 1 pasó a usar `$LEIDO` el 28-ago.
+
+### 8. Y el banco que faltaba, que es la parte que no caduca
+
+El auditor señaló lo evidente en cuanto lo dijo: la sección 0 es ahora **una función pura**
+—entran líneas `E`/`R`/`L` y los ficheros del `.git`, sale un estado por repo— y era lo
+único del arranque sin banco, en un repo que ya tiene tres. Y los dos rojos salieron con
+esa misma técnica, en dos comandos.
+
+`scripts/probar-indice-clon.sh`, **22 casos**, con el patrón que ya usaba
+`probar-1d-deriva.sh`: **extrae el `awk` EN VIVO del hook**, así que prueba la versión que
+haya, no una copia que se quedó pegada. Cubre al día, por detrás, `packed-refs`, rama de
+trabajo con `main` en la punta (el caso ECC), HEAD desprendido, **fetch sin merge** (que
+NO puede dar «al día»), worktree, `.git` ilegible, repo sin commits, sin clonar, sin datos,
+**SHA vacío** (el rojo), `$RUTAS` con espacios, comentarios en `repos.txt`, el contrato del
+separador TAB, y el coste con 60 repos.
+
+Y se comprobó que **muerde**: deshaciendo el arreglo del SHA vacío en una copia del hook
+fallan 2 casos, y volviendo el separador a espacio fallan 5.
+
+### 9. Queda abierto (no tocado en esta sesión)
+
+- **EL PRIMERO DE TODOS: `estado.txt` guarda el último push SEA DE LA RAMA QUE SEA.**
+  `servidor/receptor-webhook.py` lee `datos["after"]` y **nunca** `datos["ref"]`
+  (comprobado). O sea que un push a una rama de trabajo pisa el SHA del repo igual que uno
+  a `main`, y entonces el índice puede decir «al día» con `main` por detrás (si tu HEAD
+  está en esa rama), o marcar un PENDIENTE que **ningún `git pull` apaga** hasta que
+  alguien empuje otra cosa. Lo segundo es peor de lo que parece: el diseño nuevo, a
+  propósito, ya no consume el aviso — y un renglón que no se puede apagar enseña a no leer
+  la lista. Arreglo propuesto: que el receptor guarde el ref en una 4.ª columna
+  (`nombre TAB sha TAB fecha TAB ref`, al final para no romper `$3`) y que el `awk` compare
+  contra ese ref; o, como mínimo, ignorar los pushes cuyo ref no sea
+  `refs/heads/{main,master}`. **Toca el servidor y hay que desplegarlo: sesión propia.**
+- **El sobre se está pasando de `MAX_CHARS_TOTAL`** y el recorte corta por el FINAL, que es
+  donde va el aviso de «esta lectura va incompleta» — o sea que lo primero que se pierde es
+  el aviso de que se ha perdido algo. Hoy el que lo empuja es esta misma entrada: la
+  sección 1 tiene un suelo que enseña la entrada más reciente aunque pase de
+  `REPO_MAX_CHARS`. La sección 0 ya va acotada; lo que falta es reservarle sitio al bloque
+  degradado, o ponerlo al principio.
+- **Los nombres de repo entran en el sobre sin pasar por `sanear_delimitadores()`.** Es la
+  única puerta sin ese cerrojo. Hoy no hay superficie —`repos.txt` es de root en el
+  servidor y los nombres de GitHub no traen delimitadores— pero cierra con un `sed`.
+- **El aviso de configuración da un falso positivo.** El arranque dice que falta
+  `BITACORA_SUENO_ESTADO` en `bitacora.conf` «con valor DISTINTO al default del código».
+  No es distinto: el código pone `${BITACORA_SUENO_ESTADO:-$SUENOS/propuestas.tsv}` y el
+  `.example` pone esa misma ruta ya expandida. El comparador no expande `$SUENOS`.
+- **Una sesión sin anotar** del 01/09 (`90648a71`, 45 turnos), con borrador mecánico ya
+  escrito en `~/.claude/bitacora-borradores/`. No se reconoce desde aquí.
+- **Fundir `~/.claude/CLAUDE.md` (472 líneas) con `bitacora-flota/config/CLAUDE.md` (280)**,
+  divergidos en las dos direcciones. Al canónico le faltan cinco secciones que solo tiene
+  el PC Nuevo, incluida «Lee el mensaje entero antes de ejecutar nada». Trabajo de otra
+  sesión, a mano y con el diff delante.
+### La lección
+
+Es la de siempre en este repo, con dos vueltas más. La primera: **cuando lo que quieres
+saber es un estado, no lo derives de un histórico de avisos.** Míralo. El histórico
+contesta «¿te lo dije?», que no es la pregunta; y un aviso que se apaga solo sin que nadie
+haya arreglado nada no es un aviso, es un fallo silencioso con buena presentación.
+
+La segunda la puso la auditoría, y escuece más: **el arreglo traía dentro el mismo fallo
+que venía a matar.** Comparar contra un vacío es comparar contra nada y llamarlo «al día»,
+igual que comparar contra el marcador era comprobar «¿te lo dije?» y llamarlo «sin
+movimiento». Escrito el mismo día, por quien acababa de escribir tres párrafos sobre
+justamente eso. Por eso el revisor llega sin contexto y por eso ahora hay un banco: el
+razonamiento correcto sobre el fallo no protege de volver a cometerlo.
+
 ## 2026-09-06 — [PC viejo] Los dos repos mudos ya no lo están, y al comprobarlo apareció que llevaban semanas sin estarlo: existe una GitHub App que nadie había anotado
 
 Madrugada del 6, continuación directa de la sesión del 5. Cierra el cabo suelto que dejó

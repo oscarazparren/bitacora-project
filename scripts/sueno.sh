@@ -77,12 +77,35 @@
 # Salida: el informe por stdout y una copia en $BITACORA_SUENOS/AAAA-MM-DD.md.
 # Código de salida SIEMPRE 0: es un informe, no una comprobación que deba tumbar nada.
 #
-# Cómo dejarlo corriendo a diario (PowerShell, como administrador no hace falta):
+# Cómo dejarlo corriendo a diario (PowerShell, como administrador no hace falta).
+# Registrado y COMPROBADO así en el PC Nuevo el 6-sep-2026. Los dos avisos de abajo no
+# son adorno: sin ellos la tarea se queda en "Listo" y no corre nunca.
 #   $a = New-ScheduledTaskAction -Execute 'C:\Program Files\Git\bin\bash.exe' `
 #        -Argument '-lc "~/repos/bitacora-project/scripts/sueno.sh --silencioso"'
-#   $t = New-ScheduledTaskTrigger -Daily -At 7:00
-#   Register-ScheduledTask -TaskName 'bitacora-sueno' -Action $a -Trigger $t
-# (comprobar antes la ruta real de bash.exe con: (Get-Command bash).Source)
+#   $t = New-ScheduledTaskTrigger -Daily -At ([datetime]'07:00')
+#   $s = New-ScheduledTaskSettingsSet -StartWhenAvailable -AllowStartIfOnBatteries `
+#        -DontStopIfGoingOnBatteries
+#   Register-ScheduledTask -TaskName 'bitacora-sueno' -Action $a -Trigger $t -Settings $s
+#
+# NO SAQUES LA RUTA CON (Get-Command bash).Source. Aquí ponía eso, y en el PC Nuevo
+# devuelve ...\AppData\Local\Microsoft\WindowsApps\bash.exe, que es el bash de WSL
+# (x86_64-pc-linux-gnu), no el de Git (cygwin). Bajo WSL, ~/repos no existe y la tarea no
+# encontraría nada que repasar. Se comprueba MIRÁNDOLA, no preguntándole al PATH:
+#   Test-Path 'C:\Program Files\Git\bin\bash.exe'
+#
+# Y LO DE LA BATERÍA NO ES UN DETALLE. New-ScheduledTaskSettingsSet trae por defecto
+# DisallowStartIfOnBatteries=True: en un portátil desenchufado la tarea se queda "En
+# cola" y NO se ejecuta -- sin error, sin log, y con el estado en "Listo". Pasó en el
+# primer intento del 6-sep. Es el fallo silencioso de siempre: parece montado y no lo está.
+#
+# Comprobar que CORRE, que es distinto de que exista -- se mira el ARTEFACTO:
+#   Start-ScheduledTask -TaskName 'bitacora-sueno'
+#   Get-ScheduledTaskInfo -TaskName 'bitacora-sueno'    # LastTaskResult 0
+# El LastTaskResult prueba MENOS de lo que parece: este script sale 0 siempre y a
+# propósito (y una opción desconocida también), así que con un typo en el -Argument
+# saldría 0 igual. La comprobación de verdad es la línea de abajo: el fichero.
+#   Get-Item "$env:USERPROFILE\.claude\bitacora-suenos\$(Get-Date -f yyyy-MM-dd).md"
+# Medido: 87 s a mano, 238 s lanzado por el Programador (corre en prioridad de fondo).
 
 set -uo pipefail
 
@@ -112,7 +135,7 @@ while [ $# -gt 0 ]; do
     --raiz) RAIZ_REPOS="${2:-$RAIZ_REPOS}"; shift 2 ;;
     --fetch) FETCH=si; shift ;;
     --silencioso) SILENCIOSO=si; shift ;;
-    -h|--help) sed -n '2,90p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) awk 'NR==1 {next} /^#/ {sub(/^# ?/, ""); print; next} {exit}' "${BASH_SOURCE[0]}"; exit 0 ;;
     *) echo "sueno: opción desconocida '$1' (--help para la lista)" >&2; exit 0 ;;
   esac
 done
@@ -184,13 +207,19 @@ limpio() { N_LIMPIO=$((N_LIMPIO + 1)); printf '\nNADA-QUE-PROPONER -- %s\n' "$1"
 dudoso() { N_DUDOSO=$((N_DUDOSO + 1)); printf '\nNO-SE-PUDO-COMPROBAR -- %s\n' "$1" >> "$CUERPO"; }
 
 # ---------- Localizar los repos ----------
-REPOS=""
+# ARRAY, no cadena separada por espacios: hay carpetas de repo con espacios en el
+# nombre (PC Nuevo, 6-sep-2026: "~/repos/OpenCo Desing"), y con una cadena el bucle
+# las partía en dos rutas inexistentes -- "cd: .../OpenCo: No such file or directory"
+# por stderr, que con --silencioso y corriendo de noche no lee nadie. Ese repo se
+# quedaba sin auditar y además contaba doble en el total del cierre (decía 45 donde
+# hay 44).
+REPOS=()
 if [ -d "$RAIZ_REPOS" ]; then
   for d in "$RAIZ_REPOS"/*/; do
     d=${d%/}
     [ -d "$d/.git" ] || continue
     ignorado "$d" && continue
-    REPOS="$REPOS $d"
+    REPOS+=("$d")
   done
 fi
 
@@ -239,7 +268,7 @@ AUDITOR="$AQUI/auditar-sesiones.sh"
 # auditor le falta. Asigna cada transcript al repo cuyo patrón case MÁS LARGO, el más
 # específico.
 PATRONES=$(mktemp)
-for repo in $REPOS; do
+for repo in "${REPOS[@]}"; do
   rw=$(cd "$repo" && pwd -W 2>/dev/null || echo "$repo")
   # La transformación va SINCRONIZADA con la de auditar-sesiones.sh, que es donde está
   # razonada y medida. Si divergen, este filtro descarta EN SILENCIO la deuda de una
@@ -258,11 +287,11 @@ duena_de() {   # duena_de <nombre-de-carpeta-de-proyecto> -> ruta del repo, o va
 }
 if [ ! -x "$AUDITOR" ]; then
   dudoso "no encuentro $AUDITOR, que es quien sabe responder a esto."
-elif [ -z "$REPOS" ]; then
+elif [ "${#REPOS[@]}" -eq 0 ]; then
   dudoso "no encuentro repos en $RAIZ_REPOS (¿es la raíz correcta? se ajusta con --raiz)."
 else
   hubo_deuda=no
-  for repo in $REPOS; do
+  for repo in "${REPOS[@]}"; do
     nombre=${repo##*/}
     # El auditor tiene su propia ventana (BITACORA_AUDITORIA_DIAS); no se le pisa desde
     # aquí a propósito -- si las dos ventanas discreparan, una pieza contaría deuda que
@@ -487,11 +516,11 @@ fi
 # =========================================================================
 printf '\n## 4. Trabajo sin subir\n' >> "$CUERPO"
 
-if [ -z "$REPOS" ]; then
+if [ "${#REPOS[@]}" -eq 0 ]; then
   dudoso "no encuentro repos en $RAIZ_REPOS."
 else
   pendiente=""
-  for repo in $REPOS; do
+  for repo in "${REPOS[@]}"; do
     nombre=${repo##*/}
     git -C "$repo" rev-parse --git-dir >/dev/null 2>&1 || continue
     [ "$FETCH" = si ] && git -C "$repo" fetch -q --all 2>/dev/null
@@ -548,7 +577,7 @@ SEGS=$(( $(date +%s) - INICIO ))
   echo "---"
   echo
   printf 'PROPUESTAS=%s  limpios=%s  NO-SE-PUDO-COMPROBAR=%s  |  %s repo(s), ventana %s día(s), %s s\n' \
-    "$N_PROP" "$N_LIMPIO" "$N_DUDOSO" "$(printf '%s' "$REPOS" | wc -w | tr -dc '0-9')" "$DIAS" "$SEGS"
+    "$N_PROP" "$N_LIMPIO" "$N_DUDOSO" "${#REPOS[@]}" "$DIAS" "$SEGS"
   if [ "$N_DUDOSO" -gt 0 ]; then
     echo
     echo "Hay $N_DUDOSO cosa(s) que NO se pudieron comprobar. Eso no es \"está limpio\":"
