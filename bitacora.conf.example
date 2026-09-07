@@ -10,51 +10,22 @@ BITACORA_ETIQUETA="portatil-1"
 #  para eliminar los conflictos de merge. Ver NOTAS-DE-CAMPO.md.)
 BITACORA_FICHERO="BITACORA.md"
 
-# Cuántas ENTRADAS completas (no líneas) del registro de un repo se inyectan al
-# arrancar. Las que no caben no se pierden: siguen en el fichero, y se avisa de
-# cuántas quedan y desde qué fecha. Sigue siendo un truncado ciego por antigüedad,
-# no recuperación por relevancia — eso sigue pendiente, ver README.
+# RETIRADAS EL 7-SEP-2026, y con ellas todo el ajuste fino del tamaño de lo inyectado:
+# BITACORA_MAX_ENTRADAS, BITACORA_REPO_MAX_CHARS, BITACORA_FLOTA_ENTRADAS,
+# BITACORA_FLOTA_MAX_CHARS, BITACORA_CARPETA_TECHO, BITACORA_CARPETA_MAX_CHARS,
+# BITACORA_INDICE_TECHO, BITACORA_BORRADOR_MAX_POR_ARRANQUE y BITACORA_MAX_LINEAS.
 #
-# OJO CON CUÁL ES LA PALANCA DEL TAMAÑO: esta variable NO lo es. Lo que de verdad
-# acota lo que se inyecta son los techos de caracteres de abajo (BITACORA_REPO_MAX_CHARS
-# y, por encima de todo, BITACORA_MAX_CHARS_TOTAL). Medido en el PC viejo sobre
-# agentes-lizar: bajar MAX_ENTRADAS de 5 a 4 no cambió NADA el tamaño de lo inyectado;
-# lo que sí lo metía dentro del límite era el techo de caracteres. Las entradas no
-# pesan igual, así que contarlas no acota nada por sí solo.
-BITACORA_MAX_ENTRADAS=5
+# El hook YA NO INYECTA NINGUNA BITÁCORA: la apunta. No hay nada que recortar, así que
+# no hay techos que ajustar. Si las tienes puestas en tu conf, el propio hook te avisa
+# de que ya no hacen nada (sección 2c); quítalas y no vuelvas a leerlas creyendo que
+# controlan algo. El porqué de la retirada está en la BITACORA.md de este repo,
+# entrada del 7-sep-2026.
 
-# Techo de CARACTERES de la sección 1 (bitácora del repo). Igual que con la carpeta
-# y la flota: las entradas no pesan igual, así que limitar solo por número (arriba)
-# no basta.
-BITACORA_REPO_MAX_CHARS=6000
-
-# Techo GLOBAL de caracteres de TODO lo que este hook inyecta, sumando todas las
-# secciones. Es la palanca que de verdad importa: Claude Code corta a este tamaño
-# lo que un hook puede entregar, y lo hace SIN AVISAR — pasarse no deja "un poco
-# menos de contexto", descarta el envío ENTERO. Medido: agentes-lizar llegó a pedir
-# 12.046 caracteres con la config por defecto y se perdió sin decir nada.
+# Techo GLOBAL de caracteres de TODO lo que este hook inyecta. Sobrevive como red de
+# seguridad, no como palanca: Claude Code descarta el envío ENTERO y SIN AVISAR si un
+# hook se pasa de este tamaño. Desde el repliegue el sobre ronda 1-3 KB, así que esto no
+# debería dispararse nunca; si lo hace, es que algo ha vuelto a crecer sin control.
 BITACORA_MAX_CHARS_TOTAL=10000
-
-# Cuánta bitácora de FLOTA (infraestructura, fuera de cualquier repo) se inyecta.
-#
-# SE CORTA POR ENTRADAS ENTERAS, no por líneas. `BITACORA_MAX_LINEAS` quedó RETIRADA el
-# 29-ago-2026; si la tienes puesta, el hook te avisa de que ya no hace nada.
-#
-# Por qué se retiró, con el daño medido: el corte por líneas parte la última entrada a
-# mitad de frase y no lo dice. El 28-ago-2026 una máquina re-diagnosticó desde cero una
-# avería que la otra ya había anotado esa misma mañana, porque la entrada caía fuera del
-# corte. Dos diagnósticos, dos facturas. Subirlo de 40 a 80 solo movió dónde se parte.
-#
-# Hacen falta DOS techos, por lo mismo que en las secciones del repo y la carpeta: las
-# entradas no pesan igual, así que contarlas no acota el tamaño. Medido el 29-ago sobre
-# una bitácora de flota real: 1 entrada = 2.888 chars, 2 = 6.478, 3 = 9.654. Con
-# BITACORA_MAX_CHARS_TOTAL en 10.000, tres entradas enteras se lo comen casi todo.
-#
-# 5.000 deja el MISMO presupuesto que daban las 80 líneas (4.957): sin regresión, pero
-# ahora lo que llega son entradas COMPLETAS y se dice cuántas se quedan fuera. Si no
-# caben todas se sueltan enteras, nunca a medias.
-BITACORA_FLOTA_ENTRADAS=3
-BITACORA_FLOTA_MAX_CHARS=5000
 
 # Carpetas donde el hook no crea nada y calla si no hay bitácora ya.
 # OJO: no excluir "*/repos/*" a secas — si guardas ahí tus proyectos activos (no
@@ -139,11 +110,6 @@ BITACORA_CUENTA_GITHUB="oscarazparren"
 BITACORA_WEBHOOK_URL="https://n8n.lizaraia.com/gh-bitacora/"
 BITACORA_WEBHOOK_SECRETO="/opt/bitacora/config/webhook.secret"
 
-# Techo duro de entradas por repo que muestra la sección 1, aunque la fecha de la
-# última visita a ese repo (que da el índice) permita más. Cubre el caso de volver
-# tras mucho tiempo sin visitar un repo en concreto.
-BITACORA_INDICE_TECHO=6
-
 # ---------- Presupuesto de tiempo del hook (segundos) ----------
 # El hook tiene un plazo: el "timeout" con que se registra en ~/.claude/settings.json
 # (45 s). Si lo agota, Claude Code lo MATA y DESCARTA la salida entera, sin avisar ni
@@ -174,24 +140,6 @@ BITACORA_PRESUPUESTO=25
 # esa avería otra vez. RUTAS sí lo lee el índice: es lo que le dice dónde está el clon.
 BITACORA_VISTO="$HOME/.claude/bitacora-visto"
 BITACORA_RUTAS="$HOME/.claude/bitacora-rutas"
-
-# ---------- Bitácora de la CARPETA activa, en un monorepo ----------
-# La sección 1 solo mira la raíz del repo GIT. Si trabajas en un monorepo con
-# varios agentes/proyectos dentro (cada uno con su propia BITACORA.md de
-# detalle, p.ej. agentes/clon/BITACORA.md), esto añade esa bitácora también,
-# subiendo desde la carpeta donde se abrió la sesión hasta encontrar la primera
-# BITACORA.md por el camino. Si no hay ninguna carpeta así (repo de un solo
-# proyecto), esta sección no añade nada.
-#
-# Dos techos, no uno: las entradas no pesan igual entre carpetas (una bitácora
-# de detalle puede tener entradas mucho más largas que la del repo), así que
-# limitar solo por NÚMERO de entradas no basta -- medido en vivo el 22-ago-2026:
-# 3 entradas de una carpeta sumaron 16.413 caracteres, más del doble del límite
-# de 10.000 de todo el hook junto. Se recorta por AMBOS, entradas enteras nunca
-# a medias: si ni la más reciente sola cabe en el límite de caracteres, se
-# enseña igual (una de más pesa menos que enseñar cero).
-BITACORA_CARPETA_TECHO=3        # techo de entradas, antes de mirar el tamaño
-BITACORA_CARPETA_MAX_CHARS=2500 # techo de caracteres de esta sección
 
 # ---------- Aviso de coste de contexto (opcional) ----------
 # hooks/userpromptsubmit-contexto.sh: avisa cuando sale a cuenta cortar la
@@ -270,12 +218,6 @@ BITACORA_BORRADORES="$HOME/.claude/bitacora-borradores"
 BITACORA_BORRADOR_MAX_PROMPTS=60         # mensajes de usuario que entran, del primero en adelante
 BITACORA_BORRADOR_MAX_CHARS_PROMPT=4000  # por mensaje; lo que pase de aquí se corta Y SE DICE
 BITACORA_BORRADOR_MAX_COMANDOS=80        # comandos de Bash/PowerShell (solo la primera línea de cada uno)
-
-# Cuántos borradores prepara COMO MUCHO un arranque (sección 1c). Uno nuevo cuesta
-# 1-3 s del BITACORA_PRESUPUESTO de arriba; uno ya escrito, ~0,4 s (es idempotente:
-# el transcript de una sesión cerrada no cambia). Si sobran deudas, se dice en el
-# aviso de "ESTA LECTURA VA INCOMPLETA" -- no se recorta en silencio.
-BITACORA_BORRADOR_MAX_POR_ARRANQUE=2
 
 # ---------- Deriva del CLAUDE.md entre máquinas (opcional) ----------
 # ~/.claude/CLAUDE.md es el fichero de instrucciones del agente, es LOCAL de cada

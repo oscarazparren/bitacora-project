@@ -10,11 +10,15 @@ Esto era menor cuando quien escribía código era una persona que se acordaba. C
 deja de serlo: cada sesión arranca en cero, y el coste de reconstruir el contexto crece
 con el número de sesiones y de agentes implicados.
 
-Bitácora es un registro estructurado de estado y decisiones, versionado junto al código,
-escrito en los momentos en que el contexto está a punto de perderse y leído
-selectivamente al abrir sesión.
+Bitácora es un registro de estado y decisiones, escrito a mano y versionado junto al
+código, que viaja entre las máquinas de quien trabaja sobre los mismos repos. Al abrir
+sesión un hook **no lo inyecta**: avisa de lo que no cuadra entre máquinas y apunta al
+fichero, para que lo abra quien lo necesite.
 
 > **No es memoria: es trazabilidad de intención.**
+>
+> Y tampoco es continuidad entre sesiones. Se intentó, se midió lo que costaba, y salía
+> más caro que el problema que resolvía — ver **Estado**, más abajo.
 
 ---
 
@@ -60,26 +64,44 @@ precisamente por eso es fácil publicarlo sin darse cuenta.
 
 ## Estado
 
-Honestamente: **esto es una consolidación de un prototipo en uso, no un producto
-terminado.** Lo que hay funciona; lo que falta está identificado y documentado.
+> ### ⚠️ El 7 de septiembre de 2026 este proyecto se replegó, a propósito
+>
+> Se midió lo que costaba (la fase de medición del plan, pendiente desde agosto) y el
+> número no justificaba seguir construyendo:
+>
+> - La maquinaria había costado **~160 $ en 5 días** de trabajo, contra **~700 $** de
+>   todos los repos que dan dinero en el mismo periodo. Era la 3.ª partida más cara de
+>   la flota, por delante de cualquier aplicación real por separado.
+> - El techo de lo que la lectura selectiva podía ahorrar eran **15-25 $ en dos meses**.
+>   La mejora costaba varios múltiplos de su propio beneficio máximo.
+> - Las últimas 12 entradas de esta bitácora eran 12 de 12 sobre su propia fontanería.
+>
+> **La bitácora dejó de ser canal entre sesiones y se quedó como canal entre máquinas.**
+> El hook ya no inyecta ningún registro: avisa de descuadres y **apunta** al fichero. El
+> sobre de arranque pasó de 16.364 bytes a 3.541.
+>
+> El razonamiento entero, con las tablas, está en la entrada del 2026-09-07 de
+> [BITACORA.md](BITACORA.md). **Si vienes buscando el sistema jerárquico que describen
+> los documentos de diseño, no se construyó y no se va a construir.**
 
 | Pieza | Estado |
 |---|---|
-| Lectura automática al arrancar (`SessionStart`) | ✅ Funciona |
-| Bitácora de repo + bitácora de flota | ✅ Funciona |
-| Aviso de registro obsoleto respecto al remoto | ✅ Funciona |
+| Avisos de descuadre entre máquinas al arrancar (`SessionStart`) | ✅ Funciona — clones fuera de la punta del servidor, repo por detrás del remoto, trabajo sin subir, deriva del `CLAUDE.md`, descuadre de configuración |
+| El hook **apunta** a la bitácora en vez de inyectarla | ✅ Desde el 2026-09-07 |
+| Bitácora de repo + bitácora de flota, como ficheros en git | ✅ Funciona |
 | Registro entregado como datos delimitados, no como instrucciones | ✅ Funciona |
 | Rechazo de credenciales antes de escribir | ✅ En `anotar.sh` |
 | Commit y subida automáticos al anotar | ✅ En `anotar.sh` desde el 2026-08-25 — antes escribía en local y decía «anotado» |
-| Esquema con ciclo de vida de decisiones | 📄 Especificado, sin validador todavía |
-| Auditoría de sesiones que cerraron sin anotar | ✅ `scripts/auditar-sesiones.sh`, en el arranque desde el 2026-09-01. Mira el **artefacto** (commits que tocan la bitácora), no un registro de «hecho» |
-| Borrador mecánico de la sesión, para reconstruirla | ✅ `scripts/borrador-sesion.sh` desde el 2026-09-01. **Local, nunca commiteado, sin coste de modelo** — prompts literales, ficheros escritos, comandos y commits |
-| Coste real por sesión, modelo y día | ✅ `scripts/coste-sesiones.py` desde el 2026-09-04. Suma las **cuatro clases de token de cada mensaje** a tarifas publicadas. Sumar las líneas del transcript sin más infla el gasto un 153 % |
-| Repaso diario que **propone y no ejecuta** | ✅ `scripts/sueno.sh` desde el 2026-09-04. Deuda de bitácora en **todos** los repos, sesiones pasadas del umbral de contexto, sesiones caras y trabajo sin subir. Escribe un informe fuera de todo repo; no anota, no commitea, no sube |
-| **Que el agente escriba la entrada solo** | ❌ **No implementado, y no por descuido.** `PreCompact` y `SessionEnd` no pueden hacer que el agente escriba (son *side-effect only*), y un hook no redacta. Hoy hay auditoría + borrador; **la entrada la sigue escribiendo el agente** |
-| Un fichero por entrada (`.bitacora/`) | ❌ Hoy es un `BITACORA.md` único: conflicto de merge si dos máquinas anotan el mismo día |
-| Lectura selectiva por relevancia | ❌ Hoy es `head -40`, truncado ciego que degrada con cada entrada |
-| Linter de decisiones (ruta → decisión vigente) | ❌ Diseñado, sin construir |
+| Aviso de cuándo sale a cuenta cortar la sesión | ✅ `hooks/userpromptsubmit-contexto.sh`. Mide **tokens de contexto**, no bytes |
+| Coste real por sesión, modelo y día | ✅ `scripts/coste-sesiones.py`. Suma las **cuatro clases de token de cada mensaje** a tarifas publicadas. Sumar las líneas del transcript sin más infla el gasto un 153 % |
+| Auditoría de sesiones que cerraron sin anotar | 🔌 `scripts/auditar-sesiones.sh` **sigue existiendo pero ya no está cableado al arranque**. Se ejecuta a mano |
+| Borrador mecánico de la sesión | 🔌 `scripts/borrador-sesion.sh`, igual: existe, se llama a mano, ya no corre solo |
+| Repaso diario que propone y no ejecuta | 🔌 `scripts/sueno.sh`, igual. Escribe su informe; el arranque ya no lo anuncia |
+| Esquema con ciclo de vida de decisiones | 📄 Especificado, sin validador. **Retirado del plan** |
+| Que el agente escriba la entrada solo | ❌ **No implementado, y no por descuido.** `PreCompact` y `SessionEnd` no pueden hacer que el agente escriba (son *side-effect only*), y un hook no redacta. **La entrada la escribe el agente, a mano, y así se queda** |
+| Un fichero por entrada (`.bitacora/`) | ❌ Sigue siendo un `BITACORA.md` único. **Retirado del plan** |
+| Lectura selectiva por relevancia | ❌ **Retirada del plan el 2026-09-07**: costaba más de lo que podía ahorrar |
+| Linter de decisiones (ruta → decisión vigente) | ❌ Diseñado, sin construir. **Retirado del plan** |
 
 El porqué de cada hueco está en **[NOTAS-DE-CAMPO.md](NOTAS-DE-CAMPO.md)**, junto con
 las cosas que se probaron y no funcionaron.

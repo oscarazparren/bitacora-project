@@ -100,11 +100,28 @@ Qué sobrevive del `SessionStart` y qué no:
 | 1 cuerpo · 1b carpeta · 2 cuerpo de flota · 2z | **fuera**, sustituido por un puntero de una línea | esto es «dejar de EMPUJAR el cuerpo» |
 | 1c auditor + borrador · 1c-bis sueño · rama `compact` | **fuera** | continuidad entre sesiones, ya cubierta por el mensaje de arranque |
 
-De **1.837 líneas a ~200**. `sessionend-anotar.sh` se retira (solo alimentaba al
-auditor). **Se quedan** `sessionend-foto.sh`, el receptor de webhooks del servidor y la
-GitHub App: son lo único que hace de canal entre máquinas de verdad, y alimentan la
-sección 0. **Se queda** `userpromptsubmit-contexto.sh`: no es continuidad de bitácora, es
-el aviso de coste, y el CLAUDE.md se apoya en él.
+De **1.837 líneas a 1.020**, y medido en vivo: **el sobre pasa de 16.364 bytes a 3.541**,
+en 13 s de un presupuesto de 25 y sin degradarse.
+
+> **Aviso sobre las 1.020 líneas, porque yo mismo dije «~200» al proponerlo y era falso.**
+> El recorte se ha hecho BORRANDO secciones enteras, no reescribiendo las que quedan: el
+> awk de la sección 0 (que lee los refs de 43 clones sin lanzar un proceso) y la lógica de
+> dirección de la 1d son grandes, están pagadas a base de fallos reales, y se conservan
+> **verbatim**. Reescribirlas para que el fichero «pareciera» pequeño habría tirado eso a
+> la basura para ganar un número bonito. **El tamaño que importaba era el del SOBRE, no el
+> del fichero, y ese sí baja 4,6 veces.**
+
+`sessionend-anotar.sh` se retira (solo alimentaba al auditor). **Se quedan**
+`sessionend-foto.sh`, el receptor de webhooks del servidor y la GitHub App: son lo único
+que hace de canal entre máquinas de verdad, y alimentan la sección 0. **Se queda**
+`userpromptsubmit-contexto.sh`: no es continuidad de bitácora, es el aviso de coste, y el
+CLAUDE.md se apoya en él.
+
+**Nueve variables se quedan huérfanas** y salen del `bitacora.conf.example`:
+`MAX_ENTRADAS`, `REPO_MAX_CHARS`, `FLOTA_ENTRADAS`, `FLOTA_MAX_CHARS`, `CARPETA_TECHO`,
+`CARPETA_MAX_CHARS`, `INDICE_TECHO`, `BORRADOR_MAX_POR_ARRANQUE` y `MAX_LINEAS`. Todo el
+ajuste fino del tamaño desaparece con el cuerpo: no hay nada que recortar. La sección 2c
+avisa sola a quien las tenga puestas — que es, exactamente, para lo que está.
 
 **El repo NO se archiva.** Sigue albergando el hook mínimo, los scripts que siguen
 sirviendo (`coste-sesiones.py`, `calibrar-umbral.py`, `sueno.sh`, `anotar.sh`) y las
