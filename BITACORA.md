@@ -11,6 +11,118 @@ Formato: `## AAAA-MM-DD — [dispositivo] titular`
 
 ---
 
+## 2026-09-07 — [PC Nuevo] Los 18 casos que el repliegue dejó rotos: 17 eran obsoletos y uno no, y ese uno destapa una regresión del hook que sigue abierta
+
+El repliegue de esta misma fecha (`8fc1b96`) reescribió el hook y no tocó
+`scripts/probar-sobre-arranque.sh`, que se quedó en **46/64**. Ésta es la sesión propia que
+pedía el apartado 8 de la entrada de la sección 2c.
+
+### 1. El veredicto, caso por caso
+
+Los 18 se revisaron contra el hook nuevo. **17 obsoletos, 1 no.** El mapa de los 17 es 1:1
+con la tabla del apartado 3 de la entrada del repliegue:
+
+| casos | qué probaban | por qué caen |
+|---|---|---|
+| 48-51, 55-58, 60, 61 | el cuerpo dentro del sobre, la bitácora de la CARPETA (1b), el cuerpo al final (2z) y el recorte mordiéndolo | el repliegue los quitó a propósito |
+| 35, 37, 38, 52, 62 | el `systemMessage` nombrando la última entrada | ahora cuenta AVISOS; el titular sigue en el sobre, dentro del puntero |
+| 43, 44, 46 | la rama «el corte pasó de largo el cuerpo y entró en los avisos» | ya no hay cuerpo del que pasar de largo: **todo** lo recortable son avisos, así que el aviso especial pasó a ser el único. No se perdió, se generalizó |
+
+**El que NO era obsoleto: el 56, «SOBREVIVE el aviso de cómo anotar».** Buscaba la cadena
+`"Para anotar aquí"`, que se fue con el cuerpo — pero **la propiedad no se fue**: la
+instrucción de cómo anotar sigue viva dentro del puntero (`sessionstart-leer.sh:554-556`),
+y que aguante el recorte sigue importando. Se leyó como «esto iba con el cuerpo» cuando iba
+con el recorte. **Lo cazó el `auditor`, no la primera lectura**, y ése es el punto: los 17
+verdaderos se distinguían del falso por un matiz de una línea.
+
+### 2. Y ese uno destapa una REGRESIÓN DEL HOOK, que queda abierta
+
+Reescrito el caso con la cadena de hoy, **da rojo**. Medido sobre el fixture, no deducido:
+
+- Sobre entero **1.965 bytes**. El puntero empieza en el **747** y ocupa **495**.
+- Dentro del puntero, la instrucción de anotar está en el byte **398 de 495**: al final.
+- La sección 1 compone **primero los avisos de git y el puntero el último**, así que cuando
+  el recorte muerde se lleva la mitad del puntero — y la mitad que se lleva es la accionable.
+
+O sea: **la pieza central del repliegue —la única línea que dice dónde está la bitácora y
+cómo escribir en ella— es de lo primero que se pierde.** El caso `70` del banco queda **en
+rojo a propósito**, con el precedente de `df92afc`, que commiteó declarando el 46/64 en vez
+de esconderlo. **75/76.**
+
+**No lo he arreglado porque el arreglo es una decisión de producto y hay conflicto real:**
+
+- *Subir el puntero por delante de los avisos de git* hace recortable el «N commits sin
+  subir», que el propio código llama «el aviso que de verdad importa antes de cerrar la
+  sesión». Es cambiar una pérdida por otra.
+- *Acortar el puntero* es lo más barato: lleva dentro ~110 bytes explicando el porqué del
+  repliegue («Desde el 7-sep-2026 este hook ya no la empuja: es canal ENTRE MÁQUINAS…»), que
+  es prosa para quien lee el código, no para el agente que tiene que actuar.
+- *Componerlo fuera del recorte*, como el bloque degradado.
+
+Atenuante, y hay que decirlo para no exagerar: con el sobre en 1-3 KB de los 10.000, **hoy
+esto no se dispara en la vida real**. Es una regresión latente. El banco la fuerza poniendo
+el máximo al 75 % del sobre real.
+
+### 3. El banco: de 64 casos a 76, y muerde
+
+Podados los 17, reescrito el 18, y cobertura nueva para lo que el hook hace hoy y no
+probaba nadie: el puntero y sus dos ramas (con entradas / vacía), el recuento de avisos del
+`systemMessage` en sus dos formas, el texto nuevo del aviso de corte, y la sesión abierta en
+una **subcarpeta** — que era el bloque del monorepo, dado la vuelta: antes fijaba que la
+bitácora de la carpeta ENTRABA; ahora fija que **no entra**, que es la decisión del
+repliegue («1b carpeta → fuera») y que sin candado se reintroduce sola.
+
+**Comprobado que muerde**, con siete mutaciones del hook (`scratchpad/muerde.sh`):
+
+| se rompe | caen |
+|---|---|
+| el cuerpo de la bitácora vuelve al sobre | 55 |
+| el aviso de corte vuelve a decir que lo perdido es releíble | 43, 44 |
+| el `systemMessage` deja de avisar del recorte | 47, 67 |
+| el recuento se olvida de la forma `AVISO` | 37 |
+| el bloque degradado vuelve al FINAL | 12, 30 |
+
+### 4. Dos cosas que enseñó escribir el banco, y una es sobre el banco mismo
+
+**La primera versión del caso del titular hostil mentía en su propio comentario.** Decía que
+lo que impide que un titular de bitácora cierre el sobre antes de tiempo es la sangría de
+dos espacios. **Es falso, y se vio quitándosela al hook: el banco siguió en verde.** Lo que
+protege es que el `awk` se queda con `substr($0, 4)` de una línea anclada en
+`'## AAAA-MM-DD'`, o sea que el titular **siempre empieza por la fecha**. Un caso verde con
+un comentario que promete un candado que no existe es peor que no tener el caso; ahora se
+comprueban las dos cosas por separado.
+
+**Y `sanear_delimitadores()` sobre el titular es código muerto** (`sessionstart-leer.sh:548`):
+su `sed` ancla en `^` y el titular nunca empieza por el delimitador, así que no casa jamás.
+No hace daño —la defensa real es la de arriba— pero aparenta proteger. No se ha tocado: es
+del hook, no del banco.
+
+### 5. CABO SUELTO CARO, y no es de esta tarea: el banco de 2c contamina la sección 2c
+
+`scripts/probar-2c-conf.sh`, que entra con `df92afc`, define seis variables de mentira en sus
+casos (`BITACORA_A`, `_B`, `_X`, `_Y`, `_UNO`, `_DOS`). El `VARS_CODIGO` de la sección 2c hace
+`grep -rhoE '\$\{BITACORA_[A-Z_]+' hooks scripts servidor` **sin excluir los bancos**, así que
+en cuanto esa rama llegue a `main` el arranque de las dos máquinas dirá, para siempre:
+
+```
+El CODIGO las lee pero el .example no las documenta: BITACORA_A BITACORA_B BITACORA_DOS BITACORA_UNO BITACORA_X BITACORA_Y
+```
+
+**Seis avisos falsos nuevos, metidos por el arreglo que existía para matar uno falso.** Es la
+familia del fallo que el apartado 5 de esa entrada ya documentó —«un detector que se documenta
+a sí mismo dentro de su propio radar»— en su versión hermana: **el banco del detector cae
+dentro del radar del detector**. Comprobado corriendo el hook, no deducido.
+
+No lo he arreglado: toca la sección 2c, que acaba de pasar por auditoría en otra rama, y
+elegir la exclusión (¿por nombre `probar-*`? ¿por directorio?) es diseño de esa sección.
+
+### 6. Queda abierto
+
+- **La regresión del apartado 2**, que es lo primero: decidir cuál de las tres salidas.
+- **El apartado 5**, antes de fusionar `claude/elated-bouman-864661` a `main`.
+- Sobre el hook entero ya no queda **ninguna aserción de orden** (los tres `espera_antes` se
+  fueron con el cuerpo). Si el orden de las secciones vuelve a importar, hay que reponerlas.
+
 ## 2026-09-07 — [PC Nuevo] Los dos descuadres que la sección 2c cantaba en cada arranque: uno era un agujero de documentación, el otro era mentira
 
 Preexistentes los dos, sin relación con el repliegue del hook de esta misma fecha. Salían
