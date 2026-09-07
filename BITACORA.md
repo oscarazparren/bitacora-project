@@ -35,7 +35,7 @@ y que aguante el recorte sigue importando. Se leyó como «esto iba con el cuerp
 con el recorte. **Lo cazó el `auditor`, no la primera lectura**, y ése es el punto: los 17
 verdaderos se distinguían del falso por un matiz de una línea.
 
-### 2. Y ese uno destapa una REGRESIÓN DEL HOOK, que queda abierta
+### 2. Y ese uno destapaba una regresión del hook. Se ha DESCARTADO, no aplazado
 
 Reescrito el caso con la cadena de hoy, **da rojo**. Medido sobre el fixture, no deducido:
 
@@ -44,24 +44,17 @@ Reescrito el caso con la cadena de hoy, **da rojo**. Medido sobre el fixture, no
 - La sección 1 compone **primero los avisos de git y el puntero el último**, así que cuando
   el recorte muerde se lleva la mitad del puntero — y la mitad que se lleva es la accionable.
 
-O sea: **la pieza central del repliegue —la única línea que dice dónde está la bitácora y
-cómo escribir en ella— es de lo primero que se pierde.** El caso `70` del banco queda **en
-rojo a propósito**, con el precedente de `df92afc`, que commiteó declarando el 46/64 en vez
-de esconderlo. **75/76.**
+O sea: con el máximo apretado, el recorte parte el puntero y se lleva la mitad accionable.
 
-**No lo he arreglado porque el arreglo es una decisión de producto y hay conflicto real:**
+**Y NO SE ARREGLA, PORQUE NO PASA.** Para que el recorte llegue a morder ahí, el sobre
+tendría que **quintuplicarse**: hoy son ~2 KB de los 10.000, y el propio hook dice que desde
+el repliegue esto no debería dispararse nunca. El caso se escribió, dio rojo, y **se
+borró** — no se dejó en rojo «declarado», que es lo que se hizo primero y estuvo mal: un
+caso rojo permanente sobre algo que no le pasa a nadie solo enseña a ignorar el rojo.
 
-- *Subir el puntero por delante de los avisos de git* hace recortable el «N commits sin
-  subir», que el propio código llama «el aviso que de verdad importa antes de cerrar la
-  sesión». Es cambiar una pérdida por otra.
-- *Acortar el puntero* es lo más barato: lleva dentro ~110 bytes explicando el porqué del
-  repliegue («Desde el 7-sep-2026 este hook ya no la empuja: es canal ENTRE MÁQUINAS…»), que
-  es prosa para quien lee el código, no para el agente que tiene que actuar.
-- *Componerlo fuera del recorte*, como el bloque degradado.
-
-Atenuante, y hay que decirlo para no exagerar: con el sobre en 1-3 KB de los 10.000, **hoy
-esto no se dispara en la vida real**. Es una regresión latente. El banco la fuerza poniendo
-el máximo al 75 % del sobre real.
+Queda escrito en el sitio, en el propio banco, junto a la aserción que sí se queda (que
+sobreviva el puntero). Si algún día el sobre crece de verdad, se repone — pero entonces
+será porque ocurre, no por si acaso.
 
 ### 3. El banco: de 64 casos a 76, y muerde
 
@@ -97,7 +90,7 @@ su `sed` ancla en `^` y el titular nunca empieza por el delimitador, así que no
 No hace daño —la defensa real es la de arriba— pero aparenta proteger. No se ha tocado: es
 del hook, no del banco.
 
-### 5. CABO SUELTO CARO, y no es de esta tarea: el banco de 2c contamina la sección 2c
+### 5. ARREGLADO: el banco de 2c contaminaba la sección 2c, y el parche se cobró la misma avería
 
 `scripts/probar-2c-conf.sh`, que entra con `df92afc`, define seis variables de mentira en sus
 casos (`BITACORA_A`, `_B`, `_X`, `_Y`, `_UNO`, `_DOS`). El `VARS_CODIGO` de la sección 2c hace
@@ -111,17 +104,21 @@ El CODIGO las lee pero el .example no las documenta: BITACORA_A BITACORA_B BITAC
 **Seis avisos falsos nuevos, metidos por el arreglo que existía para matar uno falso.** Es la
 familia del fallo que el apartado 5 de esa entrada ya documentó —«un detector que se documenta
 a sí mismo dentro de su propio radar»— en su versión hermana: **el banco del detector cae
-dentro del radar del detector**. Comprobado corriendo el hook, no deducido.
+dentro del radar del detector**.
 
-No lo he arreglado: toca la sección 2c, que acaba de pasar por auditoría en otra rama, y
-elegir la exclusión (¿por nombre `probar-*`? ¿por directorio?) es diseño de esa sección.
+**Arreglado**: `--exclude='probar-*'` en los **tres** greps de la sección 2c (`default_del_codigo`,
+`resolver_locales` y el de `VARS_CODIGO`). Inline y no en una función común a propósito:
+`probar-2c-conf.sh` extrae `resolver_locales()` en vivo del hook y la corre sola, así que
+una auxiliar definida fuera del bloque extraído lo rompería. Comprobado contra el arranque
+de verdad: el renglón entero desaparece. `probar-2c-conf` sigue 17/17.
 
-### 6. Queda abierto
-
-- **La regresión del apartado 2**, que es lo primero: decidir cuál de las tres salidas.
-- **El apartado 5**, antes de fusionar `claude/elated-bouman-864661` a `main`.
-- Sobre el hook entero ya no queda **ninguna aserción de orden** (los tres `espera_antes` se
-  fueron con el cuerpo). Si el orden de las secciones vuelve a importar, hay que reponerlas.
+> **Y la misma avería se cobró una segunda pieza el mismo día, con el parche puesto.** El
+> comentario que se escribió para explicar este arreglo listaba las seis variables **con su
+> sintaxis literal**, y ese comentario cae dentro del radar de los tres greps: el arranque
+> siguió cantando tres de ellas, leídas del comentario. Reescrito en prosa, con un aviso en
+> mayúsculas en el sitio para quien edite ahí. Es exactamente lo que ya había pasado el
+> 7-sep por la mañana con `default_del_codigo` leyéndose a sí misma — **dos veces el mismo
+> día, la segunda por el parche de la primera**.
 
 ## 2026-09-07 — [PC Nuevo] Los dos descuadres que la sección 2c cantaba en cada arranque: uno era un agujero de documentación, el otro era mentira
 

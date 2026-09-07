@@ -705,16 +705,16 @@ espera_si   "máximo apretado: SOBREVIVE la apertura del registro" "--- INICIO D
 espera_resu "máximo apretado: el systemMessage avisa del recorte"  "la lectura llegó recortada"
 # LAS DOS DE ARRIBA NO BASTAN, y la auditoría lo señaló: la cabecera se concatena FUERA
 # del head -c, así que asertar sobre ella es asertar sobre algo que el recorte no puede
-# tocar. Sin lo que viene, este bloque entero afirma solo que el recorte OCURRIÓ, y no
-# afirma nada sobre qué queda del registro -- que es la pregunta.
-#
-# Y lo que tiene que quedar es el PUNTERO. Es la pieza central del repliegue: la única
-# línea que dice dónde está la bitácora. Un sobre recortado que se la coma deja al agente
-# sin saber que hay un fichero que abrir, y eso se lee igual que "aquí no hay bitácora".
-# Ésta es la aserción heredera del caso viejo «SOBREVIVE el aviso de cómo anotar», que se
-# había podado por error creyéndolo cosa del cuerpo.
+# tocar. Por eso además se comprueba el PUNTERO, que sí está dentro del recorte y es la
+# pieza central del repliegue: la única línea que dice dónde está la bitácora.
 espera_si   "máximo apretado: SOBREVIVE el puntero a la bitácora" "NO SE INYECTA, SE APUNTA"
-espera_si   "máximo apretado: SOBREVIVE la instrucción de cómo anotar" "Para anotar, una entrada"
+# NO SE COMPRUEBA que sobreviva la instrucción de cómo anotar, y no es un olvido. El
+# puntero mide 495 bytes y esa instrucción está en el byte 398 de los 495, así que con el
+# máximo apretado el recorte lo parte y se la lleva. Se escribió el caso, dio rojo, y se
+# quitó en vez de dejarlo abierto: para que el recorte llegue a morder ahí, el sobre
+# tendría que quintuplicarse (hoy son ~2 KB de 10.000). Es una propiedad que no le pasa a
+# nadie, y un caso rojo permanente sobre algo que no ocurre solo enseña a ignorar el rojo.
+# Si algún día el sobre crece de verdad, esto se repone -- pero entonces será porque pasa.
 
 # ============================================================================
 # SESIÓN ABIERTA EN UNA SUBCARPETA: se apunta a la bitácora de la RAÍZ

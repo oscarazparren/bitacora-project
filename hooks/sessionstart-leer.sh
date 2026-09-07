@@ -794,10 +794,30 @@ if [ -f "$CONF" ] && [ -n "$CONF_EXAMPLE" ]; then
   # puesta no cambia nada. Medido el 30-ago-2026: de 11 claves listadas como "FALTAN", 10
   # tenían el mismo default y solo una cambiaba comportamiento -- avisar de las otras 10
   # solo entrena a ignorar el aviso el día que sí importa.
+  # LOS BANCOS NO SON CÓDIGO, Y HAY QUE EXCLUIRLOS EXPRESAMENTE (--exclude='probar-*').
+  # Los tres greps de esta sección barren hooks/, scripts/ y servidor/ enteros, y en
+  # scripts/ viven nueve bancos que definen variables DE MENTIRA dentro de sus casos, con
+  # la misma forma que las de verdad. Sin la exclusión se leen como si el hook las usara.
+  #
+  # No es teórico: el 7-sep-2026, al entrar el banco de esta misma sección, el arranque de
+  # las DOS máquinas empezó a decir que faltaban por documentar SEIS variables que no
+  # existen. Seis avisos falsos permanentes, metidos por el banco del arreglo que existía
+  # para matar UN aviso falso.
+  #
+  # >>> NO ESCRIBAS AQUÍ NINGÚN NOMBRE DE VARIABLE CON SU SINTAXIS LITERAL. <<<
+  # Este comentario cae DENTRO del radar de los tres greps de abajo. La primera versión
+  # de esta nota listaba las seis con su forma completa para explicarlas, y el arranque
+  # siguió cantando tres de ellas -- leídas de aquí. Es la avería del apartado 5 de la
+  # BITACORA.md de ese día (un detector que se lee a sí mismo dentro de su propio radar),
+  # cobrada dos veces el mismo día y la segunda por el parche que venía a quitarla.
+  #
+  # Va inline en los tres greps y no en una función común a propósito: probar-2c-conf.sh
+  # extrae resolver_locales() EN VIVO del hook y la corre sola, así que una función
+  # auxiliar definida fuera del bloque extraído lo rompería.
   default_del_codigo() {
     local var="$1" patron m
     patron='\$\{'"$var"':-[^}]*\}'
-    m=$(grep -rhoE "$patron" "$BASE_DIR/hooks" "$BASE_DIR/scripts" "$BASE_DIR/servidor" 2>/dev/null | head -1)
+    m=$(grep -rhoE --exclude='probar-*' "$patron" "$BASE_DIR/hooks" "$BASE_DIR/scripts" "$BASE_DIR/servidor" 2>/dev/null | head -1)
     [ -z "$m" ] && return 1
     m="${m#\$\{$var:-}"
     m="${m%\}}"
@@ -854,7 +874,7 @@ if [ -f "$CONF" ] && [ -n "$CONF_EXAMPLE" ]; then
       # saber cuál manda: se deja sin resolver y quedan_vars() lo convierte en silencio.
       # No es hipotético -- hoy CONF, ESTADO, DIAS, IGNORAR y otros están repetidos entre
       # scripts. Coger la primera y callar sería inventarse la respuesta.
-      def=$(grep -rhoE "$patron" "$BASE_DIR/hooks" "$BASE_DIR/scripts" "$BASE_DIR/servidor" 2>/dev/null | sort -u)
+      def=$(grep -rhoE --exclude='probar-*' "$patron" "$BASE_DIR/hooks" "$BASE_DIR/scripts" "$BASE_DIR/servidor" 2>/dev/null | sort -u)
       [ -z "$def" ] && break
       [ "$(printf '%s\n' "$def" | wc -l)" -gt 1 ] && break
       def="${def#*:-}"; def="${def%\}}"
@@ -895,7 +915,10 @@ if [ -f "$CONF" ] && [ -n "$CONF_EXAMPLE" ]; then
   # Se excluye la plomería interna que ningún caller pone en bitacora.conf porque el
   # propio hook la fija por código, y las variables retiradas.
   EXCLUIR_INTERNAS="BITACORA_CONF BITACORA_LOG BITACORA_LEIDO BITACORA_CONTEXTO_MARCAS BITACORA_FLOTA_REPO BITACORA_FOTO_MOMENTO BITACORA_MAX_LINEAS BITACORA_CONTEXTO_AVISO BITACORA_CONTEXTO_URGENTE"
-  VARS_CODIGO=$(grep -rhoE '\$\{BITACORA_[A-Z_]+' "$BASE_DIR/hooks" "$BASE_DIR/scripts" "$BASE_DIR/servidor" 2>/dev/null | sed 's/^\${//' | sort -u)
+  # --exclude='probar-*': ver la nota larga en default_del_codigo(). Éste es el grep que
+  # produce el renglón "el CODIGO las lee pero el .example no las documenta", o sea el que
+  # se comió las seis variables de mentira del banco de 2c.
+  VARS_CODIGO=$(grep -rhoE --exclude='probar-*' '\$\{BITACORA_[A-Z_]+' "$BASE_DIR/hooks" "$BASE_DIR/scripts" "$BASE_DIR/servidor" 2>/dev/null | sed 's/^\${//' | sort -u)
   SIN_DOCUMENTAR=""
   for v in $VARS_CODIGO; do
     case " $EXCLUIR_INTERNAS " in *" $v "*) continue ;; esac
