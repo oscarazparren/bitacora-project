@@ -11,6 +11,112 @@ Formato: `## AAAA-MM-DD — [dispositivo] titular`
 
 ---
 
+## 2026-09-07 — [PC Nuevo] HECHA LA FASE 2, y dice que no: el sistema se repliega. El hook deja de EMPUJAR el cuerpo y pasa a APUNTARLO, y la bitácora deja de ser canal entre sesiones
+
+La Fase 2 (medición) llevaba desde el 16 de agosto sin hacerse. Se ha hecho hoy, y el
+resultado **no autoriza el rediseño**: autoriza el repliegue. Decisión de Oscar con los
+dos números delante.
+
+### 0. Qué documento manda, porque hay dos numeraciones de fases y no se pueden mapear
+
+**Manda `bitacora-dossier-v0.2.md` (§13).** Es el documento interno de planificación
+—está en `.gitignore` como «no parte del producto público»— y su Fase 2 «Medición
+retroactiva» es **la única puerta de validación que existe en ninguno de los dos
+documentos**. Dice, textual: *«Va antes que cualquier funcionalidad nueva»*.
+
+`especificacion-tecnica-corregida-20260825.md` (§10) **no tiene fase de medición**: es una
+secuencia de construcción (tests → migración → lectura → escritura → linter → escalado).
+Y por su origen: era una espec que un tercero escribió sin conocer este repo; se revisó,
+se corrigió y se commiteó *«para que quede donde el próximo PC pueda encontrarla»*
+(entrada del 25-ago). Es referencia archivada. Manda en el **detalle de construcción** de
+cada pieza; no en si merece la pena construirla.
+
+**Si alguien vuelve a decir «Fase 2», que diga de qué documento.** Aquí, siempre el dossier.
+
+### 1. Número uno: lo que ha costado la maquinaria, contra lo que dan dinero
+
+`scripts/coste-sesiones.py` sobre los 135 transcripts de esta máquina, 13-jul a 7-sep:
+
+| | coste | sesiones | días activos |
+|---|---:|---:|---|
+| **Maquinaria bitácora (directo)** | **145,82 $** | 14 | 5 (16-ago + 1, 3, 6, 7-sep) |
+| — de eso, `cache_read` (releerse) | 88,96 $ (61 %) | | |
+| **+ oculto en sesiones multi-repo** | ~14,27 $ | 4 | prorrateado por turnos, del auditor |
+| **TOTAL** | **~160 $** | | |
+
+Contra los repos que dan dinero, mismo periodo y máquina: AlcoholTax-IA 315 $,
+agentes-lizar 235 $, todos los `lizar-*` juntos ~150 $, kangurea 0 $ (no se tocó aquí).
+**Total ~700 $.**
+
+**La bitácora ha costado el 23 % de lo que costaron los repos de dinero, y es la 3.ª
+preocupación más cara de la flota en esta máquina** — solo por detrás de AlcoholTax y
+agentes-lizar, y **por delante de cualquier app de `lizar` tomada por separado**. Los
+146 $ se gastaron en 5 días de calendario, no en 8 semanas.
+
+**Y el techo de lo que el rediseño podía ahorrar es menor que lo que cuesta hacerlo.** El
+sobre son ~2.500 tokens inyectados una vez y releídos en cada turno; sobre ~95 sesiones
+eso es del orden de **15-25 $ en todo el periodo**. La Fase 3 (lectura selectiva) cuesta
+varios múltiplos de su propio beneficio máximo. Ese es el número que mató el rediseño, y
+es exactamente el que la Fase 2 existía para producir.
+
+### 2. Número dos: sobre qué se está anotando en la flota
+
+Últimas 12 entradas de cada repo, clasificadas en «maquinaria de bitácora» vs «trabajo real»:
+
+| repo | maquinaria | trabajo real |
+|---|---:|---:|
+| **bitacora-project** | 12 | 0 |
+| lizar-asistente-aula | 3-4 | 8-9 |
+| bitacora-flota | ~3 de 20 | ~17 (Tailscale, DMARC, n8n, auditoría LIZAR) |
+| AlcoholTax-IA, agentes-lizar, kangurea-web, lizar-informes, LIZAR-AIA-WEB, lizar-correo | 0 | 12 cada uno |
+| lizar-cuentas-claras | 0-1 | 11-12 |
+
+**El 12 de 12 de este repo es cierto y es circular** — es el repo de la bitácora. Lo que
+sí dice algo son las otras dos lecturas:
+
+- **La fuga a los repos de dinero es casi nula.** Solo `lizar-asistente-aula`, y a
+  propósito: ahí se hizo la calibración del corte de sesión que cita el CLAUDE.md.
+- **Pero este repo lleva 58 entradas, y las últimas 12 son todas sobre el sobre
+  recortándose sus propios avisos**, incluida una cuyo arreglo «traía dentro el mismo
+  fallo». Y la del 1-sep dice que `PreCompact` «lleva una semana muerto, y lo mató nuestra
+  propia disciplina de corte»: **la escritura automática que la Fase 1 debía entregar no
+  existe**. El sistema lleva un mes depurándose a sí mismo.
+
+### 3. La decisión
+
+**No se hace la Fase 3.** La bitácora deja de ser canal **entre sesiones** —eso ya lo
+cubre el mensaje de arranque— y se queda como canal **entre máquinas**: los ficheros
+`.md` + git + un hook mínimo que **avisa de descuadres y apunta a la bitácora en vez de
+inyectarla**.
+
+Qué sobrevive del `SessionStart` y qué no:
+
+| sección | destino | por qué |
+|---|---|---|
+| 0. Índice de cambios (clones fuera de la punta del servidor) | **queda** | el aviso de descuadre nº 1 |
+| 1. por detrás del remoto / trabajo sin subir | **queda** | descuadre entre máquinas |
+| 1d. deriva de `CLAUDE.md` local vs canónica | **queda** | descuadre entre máquinas |
+| 2c. config vs `.example` vs la otra máquina | **queda** | descuadre entre máquinas |
+| 1 cuerpo · 1b carpeta · 2 cuerpo de flota · 2z | **fuera**, sustituido por un puntero de una línea | esto es «dejar de EMPUJAR el cuerpo» |
+| 1c auditor + borrador · 1c-bis sueño · rama `compact` | **fuera** | continuidad entre sesiones, ya cubierta por el mensaje de arranque |
+
+De **1.837 líneas a ~200**. `sessionend-anotar.sh` se retira (solo alimentaba al
+auditor). **Se quedan** `sessionend-foto.sh`, el receptor de webhooks del servidor y la
+GitHub App: son lo único que hace de canal entre máquinas de verdad, y alimentan la
+sección 0. **Se queda** `userpromptsubmit-contexto.sh`: no es continuidad de bitácora, es
+el aviso de coste, y el CLAUDE.md se apoya en él.
+
+**El repo NO se archiva.** Sigue albergando el hook mínimo, los scripts que siguen
+sirviendo (`coste-sesiones.py`, `calibrar-umbral.py`, `sueno.sh`, `anotar.sh`) y las
+docs. Lo que se retira es la ambición, no el repositorio.
+
+### 4. Lo que tiene que hacer el PC viejo
+
+`git pull` y **quitar de su `~/.claude/settings.json` la entrada de
+`sessionend-anotar.sh`**. Los demás hooks siguen registrados igual y el recorte les llega
+por el pull. Si no lo hace, ese hook seguirá escribiendo un registro que ya no lee nadie
+— inofensivo, pero es basura acumulándose.
+
 ## 2026-09-07 — [PC Nuevo] La bitácora se va al final del sobre: el recorte se la come a ella, que se puede releer, y no a los avisos, que no
 
 El «queda abierto» de la entrada anterior dejaba dos salidas y había que elegir una.
