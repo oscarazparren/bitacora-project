@@ -803,16 +803,92 @@ if [ -f "$CONF" ] && [ -n "$CONF_EXAMPLE" ]; then
     m="${m%\}}"
     printf '%s' "$m"
   }
+  # Un default del código puede pasar por una variable LOCAL del script en vez de escribir
+  # la ruta entera, y entonces las dos partes dicen lo mismo con letras distintas:
+  # BITACORA_SUENO_ESTADO cae por defecto en "$SUENOS/propuestas.tsv" (sueno.sh:125), donde
+  # SUENOS sale a su vez de BITACORA_SUENOS, y el .example documenta esa ruta ya expandida.
+  # Como texto plano son distintas; expandidas son EL MISMO FICHERO.
+  #
+  # OJO AL ESCRIBIR AQUÍ: default_del_codigo() busca con grep -r sobre hooks/ scripts/
+  # servidor/ y este fichero gana el orden alfabético a scripts/. Si este comentario
+  # escribiera la forma ${VAR:-valor} literal, el comprobador se leería a SÍ MISMO en vez
+  # de leer el código, y el día que el código cambiara y el comentario no, diría "cuadran"
+  # mirando un comentario caducado. Por eso arriba se describe en prosa y sin esa sintaxis.
+  #
+  # Corregido el 07-sep-2026, y no era cosmético: era el ÚNICO renglón que sobrevivía al
+  # filtro, así que el aviso de configuración llevaba desde el 30-ago saliendo en cada
+  # arranque para decir una sola cosa, y esa cosa era falsa. Un aviso que solo se equivoca
+  # es peor que no tenerlo: entrena a saltárselo justo para el día que acierte.
+  #
+  # $HOME NO se expande, y el motivo NO es que difiera entre máquinas (no difiere: las dos
+  # mitades se expandirían con el mismo $HOME del mismo shell, así que expandir no puede
+  # crear una diferencia). El motivo es que hacerlo de verdad exigiría eval o source sobre
+  # el contenido de un fichero, y este bloque no tiene ni uno ni otro a propósito. Además
+  # no hace falta: las dos partes escriben $HOME igual (medido: 23 de 24 claves comparan
+  # bien tal cual). Si alguien viene a "mejorar" esto metiendo un eval, esa es la razón.
+  #
+  # Todo con [[ =~ ]] y cero tuberías: en Git Bash cada proceso cuesta más que el trabajo
+  # que hace (ver scripts/probar-coste-auditor.sh), y esto corre por cada clave candidata
+  # dentro del presupuesto del arranque.
+  quedan_vars() {
+    local s="$1"
+    while [[ "$s" =~ \$\{?([A-Za-z_][A-Za-z0-9_]*)\}? ]]; do
+      [ "${BASH_REMATCH[1]}" != "HOME" ] && return 0
+      s="${s/"${BASH_REMATCH[0]}"/}"
+    done
+    return 1
+  }
+  resolver_locales() {
+    local s="$1" resto tok nom patron def i
+    for i in 1 2 3; do
+      tok=""; resto="$s"
+      while [[ "$resto" =~ \$\{?([A-Za-z_][A-Za-z0-9_]*)\}? ]]; do
+        if [ "${BASH_REMATCH[1]}" != "HOME" ]; then
+          tok="${BASH_REMATCH[0]}"; nom="${BASH_REMATCH[1]}"; break
+        fi
+        resto="${resto/"${BASH_REMATCH[0]}"/}"
+      done
+      [ -z "$tok" ] && break
+      patron='^'"$nom"'="?\$\{[A-Za-z_]+:-[^}]*\}'
+      # Si el nombre está definido en VARIOS sitios con valores distintos, no se puede
+      # saber cuál manda: se deja sin resolver y quedan_vars() lo convierte en silencio.
+      # No es hipotético -- hoy CONF, ESTADO, DIAS, IGNORAR y otros están repetidos entre
+      # scripts. Coger la primera y callar sería inventarse la respuesta.
+      def=$(grep -rhoE "$patron" "$BASE_DIR/hooks" "$BASE_DIR/scripts" "$BASE_DIR/servidor" 2>/dev/null | sort -u)
+      [ -z "$def" ] && break
+      [ "$(printf '%s\n' "$def" | wc -l)" -gt 1 ] && break
+      def="${def#*:-}"; def="${def%\}}"
+      s="${s//"$tok"/"$def"}"
+    done
+    printf '%s' "$s"
+  }
   FALTAN=""
+  INDECIDIBLES=""
   for v in $FALTAN_RAW; do
     val_example=$(grep -E "^${v}=" "$CONF_EXAMPLE" | head -1 | sed -E "s/^${v}=//; s/[[:space:]]*#.*$//; s/^\"//; s/\"\$//")
     val_codigo=$(default_del_codigo "$v")
+    # Camino rápido, y es el de casi todas: si coinciden tal cual no hay nada que expandir.
     if [ -n "$val_codigo" ] && [ "$val_codigo" = "$val_example" ]; then
       continue
+    fi
+    # Solo con la comparación plana ya fallada sale a cuenta ir a buscar definiciones al
+    # disco. Hoy eso es 1 clave de 25, no 25.
+    if quedan_vars "$val_codigo" || quedan_vars "$val_example"; then
+      val_codigo_r=$(resolver_locales "$val_codigo")
+      val_example_r=$(resolver_locales "$val_example")
+      if quedan_vars "$val_codigo_r" || quedan_vars "$val_example_r"; then
+        # Ni "cuadra" ni "no cuadra": no se sabe. Antes esto se tragaba la clave sin dejar
+        # rastro, que es un agujero mudo; y afirmar "DISTINTO" sin saberlo es el fallo que
+        # este bloque viene a matar. Se dice como lo que es, y solo cuando pasa.
+        INDECIDIBLES="$INDECIDIBLES $v"
+        continue
+      fi
+      [ -n "$val_codigo" ] && [ "$val_codigo_r" = "$val_example_r" ] && continue
     fi
     FALTAN="$FALTAN $v"
   done
   FALTAN="${FALTAN# }"
+  INDECIDIBLES="${INDECIDIBLES# }"
 
   # Dirección que faltaba (diagnóstico 30-ago-2026): el chequeo de arriba solo miraba
   # conf-vs-.example. Nunca avisaba de que el propio .example se hubiera quedado corto.
@@ -827,7 +903,7 @@ if [ -f "$CONF" ] && [ -n "$CONF_EXAMPLE" ]; then
   done
   SIN_DOCUMENTAR="${SIN_DOCUMENTAR# }"
 
-  if [ -n "${FALTAN// /}" ] || [ -n "${SOBRAN// /}" ] || [ -n "${SIN_DOCUMENTAR// /}" ]; then
+  if [ -n "${FALTAN// /}" ] || [ -n "${SOBRAN// /}" ] || [ -n "${SIN_DOCUMENTAR// /}" ] || [ -n "${INDECIDIBLES// /}" ]; then
     SALIDA="${SALIDA}=== TU CONFIGURACION NO CUADRA CON LA VERSION QUE TIENES INSTALADA ===
 "
     [ -n "${FALTAN// /}" ] && SALIDA="${SALIDA}  FALTAN en tu bitacora.conf, con valor DISTINTO al default del codigo: $FALTAN
@@ -835,6 +911,8 @@ if [ -f "$CONF" ] && [ -n "$CONF_EXAMPLE" ]; then
     [ -n "${SOBRAN// /}" ] && SALIDA="${SALIDA}  RETIRADAS, ya no hacen nada: $SOBRAN
 "
     [ -n "${SIN_DOCUMENTAR// /}" ] && SALIDA="${SALIDA}  El CODIGO las lee pero el .example no las documenta (bug del proyecto, no tuyo): $SIN_DOCUMENTAR
+"
+    [ -n "${INDECIDIBLES// /}" ] && SALIDA="${SALIDA}  NO SE PUEDE DECIDIR si cuadran, su default sale de una variable que no se resuelve (bug del proyecto, no tuyo): $INDECIDIBLES
 "
     SALIDA="${SALIDA}  El hook funciona igual porque todo tiene valor por defecto -- por eso no se nota.
   Compara con $CONF_EXAMPLE y ajusta $CONF.

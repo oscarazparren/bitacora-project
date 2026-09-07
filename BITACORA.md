@@ -11,6 +11,167 @@ Formato: `## AAAA-MM-DD — [dispositivo] titular`
 
 ---
 
+## 2026-09-07 — [PC Nuevo] Los dos descuadres que la sección 2c cantaba en cada arranque: uno era un agujero de documentación, el otro era mentira
+
+Preexistentes los dos, sin relación con el repliegue del hook de esta misma fecha. Salían
+juntos bajo «TU CONFIGURACION NO CUADRA», y resultaron ser cosas distintas.
+
+### 1. `BITACORA_ESTADO_DUENO`: el código la lee y el `.example` no la documentaba
+
+Es de **`scripts/sembrar-estado.sh:45`**, no de `sueno.sh`. Importa la distinción: `sueno.sh`
+existe pero ya no está cableado al arranque, mientras que `sembrar-estado.sh` está vivo y es
+el que siembra `estado.txt`. O sea que la variable sin documentar no era de un script
+retirado: era del que llena el fichero que alimenta el índice de clones.
+
+Documentada en `bitacora.conf.example` con el mismo valor que el default del código
+(`bitacora:bitacora`), junto a `BITACORA_ESTADO_REMOTO`, que es el fichero del que habla.
+Documentar no cambia comportamiento, y **tampoco enciende el aviso en la otra dirección**:
+al aparecer en el `.example` pasa a ser candidata de `FALTAN`, pero el filtro la descarta
+porque su valor documentado coincide con el default. Comprobado, no supuesto.
+
+### 2. `BITACORA_SUENO_ESTADO`: el aviso era FALSO, y llevaba una semana siendo el único renglón
+
+El arranque decía que faltaba en `bitacora.conf` «con valor DISTINTO al default del código».
+**No es distinto: es el mismo fichero.** El código pone
+`${BITACORA_SUENO_ESTADO:-$SUENOS/propuestas.tsv}` (`scripts/sueno.sh:125`) con
+`SUENOS="${BITACORA_SUENOS:-$HOME/.claude/bitacora-suenos}"` siete líneas más arriba, y el
+`.example` documenta esa misma ruta ya expandida. El comparador de la sección 2c comparaba
+las dos partes **como texto plano**, así que veía `$SUENOS/propuestas.tsv` frente a
+`$HOME/.claude/bitacora-suenos/propuestas.tsv` y cantaba diferencia.
+
+Lo caro no es el renglón: es que **era el único que sobrevivía al filtro**. Medido hoy sobre
+la conf real de esta máquina: de 24 claves ausentes, 23 se descartaban bien y solo ésta
+pasaba. O sea que desde el 30-ago el aviso de configuración salía en cada arranque de las
+dos máquinas para decir una sola cosa, y esa cosa era falsa. **Un aviso que solo se equivoca
+es peor que no tenerlo**: entrena a saltárselo justo para el día que acierte — que es la
+tesis del repo aplicada al repo.
+
+Ya estaba diagnosticado como cabo suelto en la entrada del 06-sep («El aviso de
+configuración da un falso positivo»). Hoy se cierra.
+
+### 3. No se ha tocado ningún valor, porque no había ningún valor mal
+
+La pregunta con la que llegó la tarea era si igualar el default del código al `.example` o
+poner la variable en la conf de cada máquina. **Ninguna de las dos.** Las dos parten de que
+los valores difieren, y no difieren:
+
+- Poner la variable en `~/.claude/bitacora.conf` calla el aviso **en esta máquina y nada
+  más**; la otra sigue viéndolo, y el proyecto se queda con el defecto dentro.
+- Igualar el default del código a la ruta literal del `.example` **rompería la indirección**:
+  hoy, quien mueva `BITACORA_SUENOS` se lleva `propuestas.tsv` con él. Con la ruta escrita a
+  mano, el estado se quedaría atrás en silencio.
+
+Lo que estaba mal era **el comparador**, y ahí es donde se ha arreglado.
+
+### 4. El arreglo: comparar valores, no letras
+
+Dos funciones nuevas en la sección 2c de `hooks/sessionstart-leer.sh`:
+
+- **`resolver_locales()`** resuelve las variables **locales del script** con el mismo criterio
+  que ya usaba `default_del_codigo()` (busca su `^VAR=` y de ahí su propio default `:-`), con
+  tope de tres vueltas por si algún día hay un ciclo.
+- **`quedan_vars()`**: si después de resolver queda algo sin resolver, **no se decide**.
+
+Y el filtro ya no tiene dos salidas, sino tres: cuadra, no cuadra, **o no se puede saber**.
+Ese tercer estado sale en el sobre con su propio renglón, y solo cuando ocurre. La
+disyuntiva «callar o falsear» que se planteó al principio era falsa: callar deja un agujero
+mudo —la clave desaparecía del informe entero sin dejar rastro— y afirmar «DISTINTO» sin
+saberlo es el fallo que el bloque viene a matar. La tercera opción es más barata que las dos.
+
+**`$HOME` no se expande, y el motivo que se escribió primero era falso.** Se puso que
+expandirlo «abre la puerta a diferencias por cómo esté puesto en cada máquina», y no: las dos
+mitades se expandirían con el mismo `$HOME` del mismo shell, así que expandir no puede *crear*
+una diferencia. El motivo bueno es otro y es el que ahora está en el código: hacerlo de verdad
+exigiría `eval` o `source` sobre el contenido de un fichero, y este bloque no tiene ninguno de
+los dos **a propósito**. Queda escrito para que el siguiente lector no lo «mejore» metiendo un
+`eval`.
+
+### 5. La auditoría lo tumbó a la primera, y tenía razón en las dos cosas
+
+Se pasó por el `auditor` en sesión limpia. Veredicto: **NO PASA**. Dos defectos reales
+introducidos por el propio arreglo:
+
+- **Coste.** La primera versión resolvía las 25 claves candidatas con tuberías de `grep`:
+  ~23 procesos por clave, unos **+400 procesos por arranque**. En Git Bash cada proceso cuesta
+  más que el trabajo que hace —lo midió este repo el 5-sep en `scripts/probar-coste-auditor.sh`—
+  y el arranque va con presupuesto de 25 s del que la foto de flota necesita 5. O sea: el
+  arreglo del aviso podía tumbar la otra mitad del aviso. Corregido con `[[ =~ ]]` y
+  `BASH_REMATCH` (cero procesos) **más un cortocircuito**: primero se compara en plano, y solo
+  se va al disco si esa comparación ha fallado *y* hay un `$` en juego. Hoy eso es 1 clave de
+  25 en vez de 25.
+- **El comentario se había convertido en la fuente de la verdad del comprobador.** Ésta es la
+  buena. `default_del_codigo()` busca con `grep -r` sobre `hooks/ scripts/ servidor/`, y
+  `hooks/` gana el orden alfabético. El comentario que se escribió para explicar el arreglo
+  contenía la forma `${BITACORA_SUENO_ESTADO:-...}` **literal**, así que el comprobador se leía
+  a sí mismo en vez de leer `sueno.sh`. Comprobado con el grep exacto que corre el hook: el
+  primer resultado era `sessionstart-leer.sh:808`, por delante de `sueno.sh:125`. Hoy los dos
+  textos coinciden y no hacía daño; el día que el código cambiara y el comentario no, el
+  detector de deriva habría dicho «cuadran» mirando un comentario caducado. **Un detector que
+  se documenta a sí mismo dentro de su propio radar**: fallo silencioso nuevo, del tipo exacto
+  que persigue este repo, metido por el parche que venía a quitar otro. Arreglado describiendo
+  el default en prosa, y con un aviso en el sitio para quien edite ahí.
+
+También de la auditoría, y hechos: **guardia de colisión** —si un nombre local está definido
+en varios sitios con valores distintos, no se resuelve, se declara indecidible— porque hoy
+`CONF`, `ESTADO`, `DIAS` e `IGNORAR` están repetidos entre scripts y coger la primera sería
+inventarse la respuesta.
+
+### 6. Banco nuevo: `scripts/probar-2c-conf.sh`, 17 casos
+
+2c era la única sección del hook sin banco, y el arreglo mete heurística nueva. Las dos
+funciones son **puras** —entra cadena, sale cadena—, así que no había excusa. Extrae las
+funciones **en vivo del hook**, como `probar-1d-deriva.sh`: prueba la versión que haya, no una
+copia pegada.
+
+Cubre el caso que motivó todo (`$SUENOS`), `$HOME` sin expandir, cadena vacía, token sin
+definición, encadenado de dos saltos, ciclo `X→Y→X` (termina y se declara indecidible), y las
+dos mitades de la colisión de nombres. **17/17, y muerde**: convirtiendo `resolver_locales` en
+la identidad fallan 12; quitando el guardia de colisión falla el 16.
+
+> Y el propio banco enseñó algo al escribirlo: la primera versión pasaba el caso interpolando
+> la cadena dentro del `bash -c`, así que el shell expandía el `$SUENOS` del caso **antes** de
+> que la función lo viera. Medía su propia comilla, no el hook. Los argumentos van por
+> parámetro posicional.
+
+### 7. Comprobado, no supuesto
+
+Con la conf real de esta máquina (la desviada de verdad) y un banco antes/después. El rig
+monta un `$HOME` de mentira con una copia del worktree, **porque si no, no se estaría midiendo
+esta rama**: el hook busca el `.example` en `$HOME/repos/bitacora-project/` *antes* que en su
+propio directorio, y ahí vive `main`.
+
+- **Antes** reproduce el aviso literal de esta sesión, con las dos variables.
+- **Después** la sección entera desaparece, y el resto del sobre queda igual.
+- **Muerde**: inyectando desvíos reales vuelve a salir — tanto uno plano (`BITACORA_SUENO_DIAS`)
+  como uno **a través de `$SUENOS`**, que es el que el código viejo no sabía distinguir de un
+  falso positivo. El arreglo no es «callar la variable ruidosa»: es compararla de verdad.
+- **Tercer estado**: apuntando el default a una variable inexistente, sale el renglón nuevo.
+- Bancos: `probar-2c-conf` 17/17, `probar-1d-deriva` 23/23, `probar-indice-clon` 37/37.
+
+### 8. HALLAZGO APARTE, Y NO ES DE ESTA TAREA: el repliegue dejó `probar-sobre-arranque` roto
+
+`scripts/probar-sobre-arranque.sh` da **46 de 64, con 18 fallos**. No es de este cambio, y
+está medido, no supuesto:
+
+| commit | resultado |
+|---|---|
+| `07d0ec1` (anterior al repliegue) | **64/64** |
+| `8fc1b96` (el repliegue) = HEAD | **46/64, 18 fallos** |
+| esta rama | **46/64**, conjunto de fallos **byte a byte idéntico** al de HEAD |
+
+O sea: el repliegue del 7-sep reescribió 1210 líneas del hook (1107 borradas) y **no tocó el
+banco que lo cubre**, que se quedó probando comportamiento que el hook ya no tiene. Lleva
+fallando desde entonces sin que nadie lo mirara. **Sesión propia**: hay que decidir caso por
+caso cuál sobra y cuál destapa una pérdida de verdad, y eso no se hace de paso.
+
+### 9. Queda abierto
+
+- Lo de arriba: `probar-sobre-arranque`, 18 casos.
+- `resolver_locales()` acota por «definición única en el repo», no por «la del fichero donde
+  estaba el default». Lo correcto sería lo segundo, y es un dato que `default_del_codigo()` ya
+  tiene y hoy tira. El guardia de colisión tapa el caso peligroso (responder mal); lo que queda
+  es que puede declarar indecidible algo que sí se sabría.
+
 ## 2026-09-07 — [PC Nuevo] HECHA LA FASE 2, y dice que no: el sistema se repliega. El hook deja de EMPUJAR el cuerpo y pasa a APUNTARLO, y la bitácora deja de ser canal entre sesiones
 
 La Fase 2 (medición) llevaba desde el 16 de agosto sin hacerse. Se ha hecho hoy, y el
