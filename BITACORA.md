@@ -11,6 +11,24 @@ Formato: `## AAAA-MM-DD — [dispositivo] titular`
 
 ---
 
+## 2026-09-08 — [PC viejo] El .example documenta BITACORA_ESTADO_DUENO, que el código leía a escondidas
+
+El chequeo 2c del hook de arranque avisaba en ESTA máquina de que
+`BITACORA_ESTADO_DUENO` la lee el código (`scripts/sembrar-estado.sh:45`) y el
+`.example` no la documenta. Era cierto y no era de la máquina: es del repo, así que
+salía y va a seguir saliendo en todas hasta que se documente. Documentada, con el
+porqué que ya estaba en el comentario del script: si `estado.txt` se queda de root, el
+receptor de webhooks no puede reemplazarlo en el próximo push y el índice se congela en
+la foto del sembrado sin que nadie se entere.
+
+No cambia comportamiento: el valor documentado (`bitacora:bitacora`) es exactamente el
+default del código, que es la condición para que el propio chequeo lo dé por bueno.
+
+Comprobado ejecutando el hook de verdad (`source=startup` sobre este repo): la sección
+«TU CONFIGURACION NO CUADRA» ya no sale. En la misma sesión se puso al día el
+`~/.claude/bitacora.conf` del PC viejo, que arrastraba las cuatro claves de recorte
+retiradas el 7-sep — pero eso es config local de máquina y no viaja por aquí.
+
 ## 2026-09-07 — [PC Nuevo] HECHA LA FASE 2, y dice que no: el sistema se repliega. El hook deja de EMPUJAR el cuerpo y pasa a APUNTARLO, y la bitácora deja de ser canal entre sesiones
 
 La Fase 2 (medición) llevaba desde el 16 de agosto sin hacerse. Se ha hecho hoy, y el

@@ -110,6 +110,13 @@ BITACORA_CUENTA_GITHUB="oscarazparren"
 BITACORA_WEBHOOK_URL="https://n8n.lizaraia.com/gh-bitacora/"
 BITACORA_WEBHOOK_SECRETO="/opt/bitacora/config/webhook.secret"
 
+# Usuario:grupo al que tiene que pertenecer BITACORA_ESTADO_REMOTO en el servidor: el
+# del servicio que recibe los webhooks (ver servidor/bitacora-receptor.service). Lo usa
+# scripts/sembrar-estado.sh al sembrar el fichero. Si queda de root, el receptor no
+# puede reemplazarlo en el próximo push y el índice se congela en la foto del sembrado
+# sin que nadie se entere -- el fallo silencioso de siempre, en versión permisos.
+BITACORA_ESTADO_DUENO="bitacora:bitacora"
+
 # ---------- Presupuesto de tiempo del hook (segundos) ----------
 # El hook tiene un plazo: el "timeout" con que se registra en ~/.claude/settings.json
 # (45 s). Si lo agota, Claude Code lo MATA y DESCARTA la salida entera, sin avisar ni
