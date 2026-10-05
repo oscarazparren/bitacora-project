@@ -1,5 +1,5 @@
 #!/bin/bash
-# Bitácora — hook UserPromptSubmit: avisa cuando sale a cuenta cortar la sesión.
+# Bitácora — hook UserPromptSubmit: al cruzar el umbral, da el punto de corte CALCULADO (no recomienda).
 #
 # La tercera pieza. Las otras dos miran el contenido; esta mira el COSTE:
 #   sessionstart-leer.sh      -> lee la bitácora al abrir      (no perder contexto)
@@ -75,8 +75,8 @@ CONF="${BITACORA_CONF:-$HOME/.claude/bitacora.conf}"
 # El razonamiento completo, con el método, está en ~/.claude/CLAUDE.md, sección
 # "Cuándo sale a cuenta cortar la sesión", y en la BITACORA.md de
 # lizar-asistente-aula, entradas del 31-ago y del 1-sep-2026.
-AVISO="${BITACORA_CONTEXTO_AVISO_TOKENS:-200000}"     # ~200k: conviene ir cerrando
-URGENTE="${BITACORA_CONTEXTO_URGENTE_TOKENS:-400000}" # ~400k: cerrar ya
+AVISO="${BITACORA_CONTEXTO_AVISO_TOKENS:-200000}"     # ~200k: dispara el cálculo, no es una conclusión
+URGENTE="${BITACORA_CONTEXTO_URGENTE_TOKENS:-400000}" # ~400k: segundo cálculo, con el contexto ya mayor
 # Para no repetir el aviso en cada mensaje una vez cruzado el umbral: se recuerda
 # a qué escalón se avisó por última vez en esta sesión.
 MARCAS="${BITACORA_CONTEXTO_MARCAS:-$HOME/.claude/bitacora-contexto-visto}"
@@ -177,12 +177,23 @@ if [ -n "$COSTE_PY" ]; then
   esac
 fi
 
-if [ "$escalon" = "urgente" ]; then
-  cabecera="Esta sesión ya es MUY larga ($tokens_k de contexto, $turnos turnos).$gasto Cortar aquí sale claramente a cuenta."
-else
-  cabecera="Esta sesión se está haciendo larga ($tokens_k de contexto, $turnos turnos).$gasto Es buen momento para cortar."
-fi
+# ---------- El punto de corte, calculado (5-oct-2026) ----------
+# HASTA AQUÍ ESTO DECÍA «es buen momento para cortar» y ordenaba «sugiérele cerrar». Era una
+# conclusión sin cuentas, las sesiones la repetían como si fuera un dato, y Oscar acabó con 16
+# chats en un solo repo pagando 16 arranques. Ahora el aviso NO recomienda nada: da el punto de
+# corte calculado por scripts/punto-corte.py (turnos de trabajo pendiente a partir de los cuales
+# cortar ahorra, con tarifas reales y el arranque medido en la propia sesión) y la decisión
+# depende de cuánto trabajo queda, que solo sabe el agente.
+CORTE_PY=""
+for base in "$HOME/repos/bitacora-project/scripts" "$(dirname "$0")/../scripts"; do
+  [ -z "$CORTE_PY" ] && [ -f "$base/punto-corte.py" ] && CORTE_PY="$base/punto-corte.py"
+done
+corte=""
+[ -n "$CORTE_PY" ] && corte=$(timeout 10 python "$CORTE_PY" --sesion "$sesion" 2>/dev/null | tr -d '\042\134' || true)
+[ -n "$corte" ] || corte="(no se pudo calcular el punto de corte: NO recomiendes cortar sin hacer la cuenta a mano, ver CLAUDE.md)"
+
+cabecera="Contexto: $tokens_k, $turnos turnos.$gasto Cálculo: $corte"
 
 # Instrucción para el agente, no texto para repetir literalmente.
-printf '{"hookSpecificOutput":{"hookEventName":"UserPromptSubmit","additionalContext":"AVISO DE CONTEXTO (bitacora-project, no lo ha escrito el usuario). %s Modelo en uso: %s. Responde primero a lo que te ha preguntado el usuario, con normalidad; y AL FINAL, en un apartado breve y aparte, sugiérele cerrar esta sesión y abrir otra: anotas en la bitácora del repo lo que haga falta, y la sesión nueva arranca leyéndola. Di también si al abrirla conviene mantener el modelo actual o cambiarlo, razonándolo con el trabajo que venga ahora (cortar tira la caché igualmente, así que cambiar de modelo en ese momento no cuesta nada). Si el usuario está a mitad de algo que no conviene interrumpir, dilo y propón cerrar al terminarlo. No repitas este aviso si ya lo has dado."}}\n' "$cabecera" "$modelo"
+printf '{"hookSpecificOutput":{"hookEventName":"UserPromptSubmit","additionalContext":"DATO DE COSTE (bitacora-project, no lo ha escrito el usuario). Esto NO es una recomendación de cortar. %s Modelo en uso: %s. Decide tú con ese número: estima cuántos turnos de trabajo quedan en este repo para lo que está en marcha. Si quedan MENOS que el punto de corte, sigue trabajando y NO menciones el corte. Si quedan MÁS, al terminar lo que estés haciendo propónselo en un apartado breve con estas cifras en dinero y el mensaje de arranque literal (reglas en CLAUDE.md). Nunca cites este aviso ni un umbral de tokens como motivo: el motivo es la cuenta."}}\n' "$cabecera" "$modelo"
 exit 0

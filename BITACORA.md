@@ -11,6 +11,23 @@ Formato: `## AAAA-MM-DD — [dispositivo] titular`
 
 ---
 
+## 2026-10-05 — [PC viejo] El aviso de contexto deja de recomendar cortar: da el punto de corte calculado
+
+- **Por qué:** el aviso decía «es buen momento para cortar» y ordenaba «sugiérele cerrar» sin
+  cuentas; las sesiones lo repetían. En `lizar-control` llevaba Oscar 16 chats. Medido ese día:
+  abrir chat nuevo allí cuesta 1,62 $ (la sesión nueva relee bitácora y diseño), no los 0,50 $
+  que se dijeron de memoria; cortar solo compensaba con más de 26 turnos pendientes.
+- **Nuevo `scripts/punto-corte.py --sesion <id>`:** con las tarifas de `coste-sesiones.py` y el
+  arranque medido en la propia sesión (contexto en su respuesta 15), da coste del turno aquí,
+  coste de abrir chat nuevo (mismo modelo y otros) y **a partir de cuántos turnos pendientes
+  compensa cortar**: N* = arranque × escritura_1h / ((contexto − arranque) × lectura).
+- **`hooks/userpromptsubmit-contexto.sh`:** mismo disparo (200k y 400k), pero el texto ya no
+  recomienda: trae ese cálculo y manda seguir sin mencionar el corte si queda menos trabajo que
+  N*. Probado sobre la sesión real (284k, Opus 5.5 → N* = 26).
+- La regla escrita va en el `CLAUDE.md` canónico (`bitacora-flota`), sección del corte.
+
+---
+
 ## 2026-09-08 — [PC viejo] El .example documenta BITACORA_ESTADO_DUENO, que el código leía a escondidas
 
 El chequeo 2c del hook de arranque avisaba en ESTA máquina de que
