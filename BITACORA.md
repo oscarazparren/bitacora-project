@@ -11,6 +11,30 @@ Formato: `## AAAA-MM-DD — [dispositivo] titular`
 
 ---
 
+## 2026-10-09 — [PC viejo] El arranque actualiza solo los clones limpios que van por detrás
+
+El 9-oct el PC viejo tenía `lizar-clon` 47 commits atrás: el hook avisaba y no hacía nada.
+Ahora la sección 0 de `hooks/sessionstart-leer.sh` clasifica cada PENDIENTE con
+`sincronizar_clon()` y **solo** hace `fetch` + `merge --ff-only` si el clon está limpio
+(en lo versionado) y va estrictamente por detrás. Sucio, divergido, adelantado, HEAD
+desprendido, sin upstream o con un fichero local que el avance pisaría: no se toca y el aviso
+dice por qué. Lo que sí actualiza lo cuenta siempre. Apagable con `BITACORA_AUTOPULL=no`.
+
+- **Lo que halló la auditoría y se arregló:** git pisa en silencio un fichero IGNORADO (un
+  `.env`) si el avance trae uno versionado con ese nombre → estado `PISARIA` antes del merge;
+  el merge corre con timeout y `core.hooksPath=/dev/null` (un `post-merge` del clon era
+  código ajeno en el arranque); reserva de 8 s para la sección 1; mismo criterio de «al día»
+  que el clasificador (incluye la rama que dijo el servidor).
+- **Pruebas:** `scripts/probar-autopull.sh` (21 casos, repos reales en temporal, incluye el
+  `.env` ignorado, el hook post-merge y rutas con espacios) y, de punta a punta, el hook
+  completo contra el servidor con `lizar-clon` clonado y atrasado 5 y 7 commits: lo dejó
+  al día; con un fichero modificado no lo tocó. Los bancos de `indice-clon` y `1d-deriva` siguen en verde.
+- **Para la otra máquina:** el hook viaja por git. Hace falta UN `git pull` en
+  `bitacora-project` allí (el hook viejo no puede actualizarse a sí mismo); no requiere tocar
+  su `bitacora.conf` (el default es `si`).
+- **Sin medir:** timeout real de un fetch HTTPS colgado en Windows y si Git Credential Manager
+  abre ventana con un token caducado (se pone `GCM_INTERACTIVE=never`, no se ha provocado).
+
 ## 2026-10-05 — [PC viejo] El aviso de contexto deja de recomendar cortar: da el punto de corte calculado
 
 - **Por qué:** el aviso decía «es buen momento para cortar» y ordenaba «sugiérele cerrar» sin

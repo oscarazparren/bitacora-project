@@ -65,6 +65,7 @@ RUTAS="${BITACORA_RUTAS:-$HOME/.claude/bitacora-rutas}"
 # CANONICO va VACÍO por defecto a propósito: la ruta depende de cómo se llame el repo que
 # guarde esa copia, y este fichero no da por hecho ninguna organización concreta. Sin él,
 # la sección 1d no hace nada. LOCAL sí tiene default, porque esa ruta la fija Claude Code.
+AUTOPULL="${BITACORA_AUTOPULL:-si}"          # si = actualiza (ff-only) los clones limpios que van solo por detrás (sección 0)
 CLAUDE_LOCAL="${BITACORA_CLAUDE_LOCAL:-$HOME/.claude/CLAUDE.md}"
 CLAUDE_CANONICO="${BITACORA_CLAUDE_CANONICO:-}"
 
@@ -167,6 +168,44 @@ usa_flota() {
   return 1
 }
 
+# Clasifica UN clon y, solo si es seguro, lo adelanta. Imprime "<ESTADO>TAB<detalle>".
+# Lo ÚNICO que escribe es un fast-forward de un clon sin cambios en lo versionado que va
+# estrictamente por detrás de su upstream; todo lo demás se informa sin tocar nada.
+#   ACTUALIZADO n   SINCAMBIO   ADELANTE n   DIVERGE a/b   SUCIO n   DESPRENDIDO
+#   SINUPSTREAM   FETCHFALLO   PISARIA   MERGEFALLO
+# Los ficheros sin seguir NO cuentan como sucio (un __pycache__ cualquiera apagaría la
+# actualización de ese repo para siempre), PERO git sí pisa en silencio un fichero IGNORADO
+# (un .env local) si el avance trae uno versionado con el mismo nombre, y ese contenido no
+# se recupera. Por eso, antes del merge, si algún fichero que el avance CREA ya existe en
+# el árbol de trabajo, no se toca nada y sale PISARIA. Hallazgo de la auditoría, reproducido.
+# Fetch y merge llevan timeout, sin hooks de git (un post-merge del clon sería código ajeno
+# ejecutado en el arranque), sin mantenimiento en primer plano y sin ventanas de credenciales.
+sincronizar_clon() {
+  local d="$1" up cuenta ahead behind sucio
+  git -C "$d" symbolic-ref -q HEAD >/dev/null 2>&1 || { printf 'DESPRENDIDO\t\n'; return; }
+  up=$(git -C "$d" rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null) || up=""
+  [ -n "$up" ] || { printf 'SINUPSTREAM\t\n'; return; }
+  GIT_TERMINAL_PROMPT=0 GCM_INTERACTIVE=never timeout "$(tope 10)" \
+    git -C "$d" -c gc.auto=0 -c maintenance.auto=false fetch -q "${up%%/*}" </dev/null >/dev/null 2>&1 \
+    || { printf 'FETCHFALLO\t\n'; return; }
+  cuenta=$(git -C "$d" rev-list --left-right --count 'HEAD...@{u}' 2>/dev/null) || { printf 'FETCHFALLO\t\n'; return; }
+  ahead=${cuenta%%[[:space:]]*}; behind=${cuenta##*[[:space:]]}
+  if   [ "$behind" -eq 0 ] && [ "$ahead" -eq 0 ]; then printf 'SINCAMBIO\t\n'; return
+  elif [ "$behind" -eq 0 ];                       then printf 'ADELANTE\t%s\n' "$ahead"; return
+  elif [ "$ahead"  -gt 0 ];                       then printf 'DIVERGE\t%s/%s\n' "$ahead" "$behind"; return
+  fi
+  sucio=$(git -C "$d" status --porcelain --untracked-files=no 2>/dev/null | grep -c .) || true
+  [ "${sucio:-0}" -eq 0 ] || { printf 'SUCIO\t%s\n' "$sucio"; return; }
+  local nuevo
+  while IFS= read -r nuevo; do
+    [ -z "$nuevo" ] && continue
+    if [ -e "$d/$nuevo" ] || [ -L "$d/$nuevo" ]; then printf 'PISARIA\t%s\n' "$nuevo"; return; fi
+  done < <(git -C "$d" diff --no-renames --name-only --diff-filter=A HEAD '@{u}' 2>/dev/null)
+  if timeout "$(tope 8)" git -C "$d" -c core.hooksPath=/dev/null -c gc.auto=0 -c maintenance.auto=false \
+       merge --ff-only -q '@{u}' </dev/null >/dev/null 2>&1; then printf 'ACTUALIZADO\t%s\n' "$behind"
+  else printf 'MERGEFALLO\t\n'; fi
+}
+
 # ---------- 0. Índice de cambios ----------
 # Contesta UNA pregunta y solo una: ¿qué repos vigilados NO están, EN ESTA MÁQUINA, en la
 # punta que el servidor vio? Nombre y ruta. No cuántos commits, no en qué dirección, no
@@ -206,6 +245,9 @@ usa_flota() {
 # NO cuentan, y es a propósito: un fetch sin merge los deja al día mientras el árbol sigue
 # por detrás, que es exactamente el fallo que esto arregla.
 #
+# (Desde el 9-oct-2026 los PENDIENTES sí se clasifican con git y los limpios que van solo
+# por detrás se actualizan: ver sincronizar_clon(). Lo de abajo describe el índice en sí,
+# que sigue sin lanzar procesos; el git se paga solo por cada PENDIENTE.)
 # NO SE DICE LA DIRECCIÓN. Distinguir "por detrás" de "sin subir" necesita git, y git aquí
 # cuesta un proceso por repo (~0,4 s en Windows: ~17 s con 43, sobre un presupuesto de
 # 25). "No coincide" cubre las dos, y las dos piden lo mismo: ir y mirar.
@@ -357,6 +399,44 @@ if [ -n "$FLOTA_SSH" ] && [ -n "$INDICE_REPOS" ]; then
     # porque hay rutas de repo CON ESPACIOS (~/repos/OpenCo Desing en el PC Nuevo): con
     # $3 sobre campos separados por espacio se imprimía media ruta, y encima justo en el
     # renglón que le dice al agente "git -C <ruta> status -sb".
+    # ---- AUTO-ACTUALIZAR los clones que van SOLO por detrás (9-oct-2026) ----
+    # Hasta hoy el hook avisaba de un clon atrasado y lo dejaba así: el 9-oct el PC viejo
+    # tenía lizar-clon 47 commits por detrás. Ahora, de los PENDIENTES, el que está limpio
+    # y va únicamente por detrás se actualiza con ff-only; los demás NO se tocan y se dice
+    # por qué. Apagable con BITACORA_AUTOPULL=no.
+    : > "$TMPD/sync"
+    if [ "$AUTOPULL" = "si" ]; then
+      N_SYNC=0
+      while IFS=$'\t' read -r _ s_nombre s_ruta; do
+        [ -n "$s_ruta" ] || continue
+        # 8 s de reserva para la sección 1 (fetch del repo actual): si el autopull se come el
+        # presupuesto, ese aviso, el más importante, se perdería con una causa falsa.
+        if [ "$N_SYNC" -ge 10 ] || ! hay_tiempo 12; then
+          printf 'SINTIEMPO\t%s\t\n' "$s_nombre" >> "$TMPD/sync"; continue
+        fi
+        N_SYNC=$((N_SYNC + 1))
+        r=$(sincronizar_clon "$s_ruta" </dev/null)
+        printf '%s\t%s\t%s\n' "${r%%$'\t'*}" "$s_nombre" "${r#*$'\t'}" >> "$TMPD/sync"
+        # Un clon actualizado solo cuenta como AL DÍA si ahora SÍ coincide con la punta que
+        # vio el servidor, con el mismo criterio de la sección (HEAD, main o master). Si no
+        # coincide sigue PENDIENTE: actualizar no es lo mismo que cuadrar.
+        if [ "${r%%$'\t'*}" = "ACTUALIZADO" ]; then
+          est_n=$(awk -F'\t' -v n="$s_nombre" '$1=="MARCA" && $2==n {print $3; exit}' "$TMPD/salida")
+          # Mismo criterio que el clasificador: HEAD, main, master o la rama que dijo el servidor.
+          ref_srv=$(awk -v n="$s_nombre" '$1=="E" && $2==n { for (k=5;k<=NF;k++) if ($k ~ /^refs\/heads\/./ && $k !~ /\.\./) { print $k; exit } }' "$TMPD/todo")
+          for ref in HEAD refs/heads/main refs/heads/master $ref_srv; do
+            if [ -n "$est_n" ] && [ "$(git -C "$s_ruta" rev-parse -q --verify "$ref" 2>/dev/null)" = "$est_n" ]; then
+              printf '%s\n' "$s_nombre" >> "$TMPD/resueltos"; break
+            fi
+          done
+        fi
+      done < <(grep '^PENDIENTE' "$TMPD/salida" 2>/dev/null)
+      if [ -s "$TMPD/resueltos" ]; then
+        awk -F'\t' -v OFS='\t' 'NR==FNR { r[$1]=1; next } $1=="PENDIENTE" && ($2 in r) { print "ALDIA", $2; next } { print }' \
+          "$TMPD/resueltos" "$TMPD/salida" > "$TMPD/salida.nuevo" && mv "$TMPD/salida.nuevo" "$TMPD/salida"
+      fi
+    fi
+
     NUEVO_VISTO="$TMPD/visto.nuevo"
     grep '^MARCA' "$TMPD/salida" 2>/dev/null | awk -F'\t' '{print $2"\t"$3}' > "$NUEVO_VISTO"
 
@@ -371,7 +451,26 @@ if [ -n "$FLOTA_SSH" ] && [ -n "$INDICE_REPOS" ]; then
     # Los topes son de CARACTERES disfrazados de líneas: la sección 4 recorta por el
     # FINAL si el envío se pasa de MAX_CHARS_TOTAL. Y los tres dicen cuántos dejan fuera:
     # un informe recortado en silencio es el fallo de siempre.
-    PENDIENTES=$(grep '^PENDIENTE' "$TMPD/salida" 2>/dev/null | awk -F'\t' '{print "  " $2 "  ->  " $3}' | head -12)
+    # Cada pendiente lleva, si se intentó, por qué NO se actualizó solo (fichero "sync").
+    PENDIENTES=$(grep '^PENDIENTE' "$TMPD/salida" 2>/dev/null | awk -F'\t' -v f="$TMPD/sync" '
+      BEGIN {
+        while ((getline l < f) > 0) {
+          split(l, c, "\t"); m = c[1]; nom = c[2]; det = c[3]
+          if      (m=="SUCIO")       t = "tiene " det " fichero(s) modificado(s): NO se ha tocado"
+          else if (m=="DIVERGE")     t = "divergido (propios/ajenos " det "): NO se ha tocado"
+          else if (m=="ADELANTE")    t = "trabajo SIN SUBIR (" det " commit(s)): falta un push"
+          else if (m=="DESPRENDIDO") t = "HEAD desprendido: NO se ha tocado"
+          else if (m=="SINUPSTREAM") t = "su rama no sigue a ninguna remota: NO se ha tocado"
+          else if (m=="FETCHFALLO")  t = "no se pudo consultar el remoto"
+          else if (m=="PISARIA")     t = "el avance pisaría un fichero local (" det "), p. ej. uno ignorado: NO se ha tocado"
+          else if (m=="MERGEFALLO")  t = "el avance rápido falló (¿un fichero sin seguir estorba?): NO se ha tocado"
+          else if (m=="SINTIEMPO")   t = "no se ha comprobado en este arranque (tope de 10 clones o sin tiempo)"
+          else if (m=="ACTUALIZADO") t = "actualizado, pero sigue sin coincidir con el servidor (¿otra rama?)"
+          else                       t = "va a la par de su remoto; el desfase es con lo que vio el servidor"
+          why[nom] = t
+        }
+      }
+      ++nr <= 12 { print "  " $2 "  ->  " $3 (($2 in why) ? "\n      " why[$2] : "") }')
     [ "$PEND_N" -gt 12 ] && PENDIENTES="$PENDIENTES
   ... y $((PEND_N - 12)) más"
 
@@ -388,9 +487,10 @@ día\": es que esta comprobación no se ha hecho. Si te vas a fiar de ella, mír
     elif [ "$PEND_N" -gt 0 ]; then
       SALIDA="${SALIDA}=== ESTOS CLONES NO ESTÁN EN LA PUNTA QUE VIO EL SERVIDOR ($PEND_N de $COMPARADOS) ===
 $PENDIENTES
-No dice en qué dirección: puede faltar un pull o puede haber trabajo aquí sin subir. Se
-mira el .git del clon, no un marcador, así que SEGUIRÁ saliendo hasta que cuadre. Si vas
-a trabajar en uno: git -C <ruta> status -sb, y lee su $FICHERO allí.
+Con BITACORA_AUTOPULL=si, aquí solo llegan los que el arranque NO ha podido o querido
+actualizar solo (un clon limpio que va únicamente por detrás se actualiza). Se mira el .git del clon,
+no un marcador, así que SEGUIRÁ saliendo hasta que cuadre. Si vas a trabajar en uno:
+git -C <ruta> status -sb, y lee su $FICHERO allí.
 
 "
     elif [ "$COMPARADOS" -eq 0 ]; then
@@ -403,6 +503,16 @@ $NOCLON_N sin clonar aquí, $NOSABE_N con el .git ilegible). Esto no es \"todo a
     else
       SALIDA="${SALIDA}=== ÍNDICE DE CAMBIOS ===
 Los $COMPARADOS repos comparables están en la punta que vio el servidor.
+
+"
+    fi
+
+    # Lo que el arranque SÍ ha hecho: es una escritura en tus repos, así que se dice siempre.
+    ACT_N=$(grep -c '^ACTUALIZADO' "$TMPD/sync" 2>/dev/null || true); [ -n "$ACT_N" ] || ACT_N=0
+    if [ "$ACT_N" -gt 0 ]; then
+      SALIDA="${SALIDA}CLONES ACTUALIZADOS AUTOMÁTICAMENTE en este arranque ($ACT_N), con git merge --ff-only:
+$(grep '^ACTUALIZADO' "$TMPD/sync" | awk -F'\t' '{print "  " $2 "  +" $3 " commit(s)"}' | head -12)
+Estaban limpios y solo por detrás; no se ha tocado ningún otro.
 
 "
     fi

@@ -284,3 +284,11 @@ BITACORA_SUENO_OLVIDO_DIAS=30
 # El umbral de contexto NO se configura aquí: el sueño usa BITACORA_CONTEXTO_URGENTE_TOKENS,
 # el mismo que avisa en cada prompt. Dos umbrales distintos para la misma pregunta se
 # contradirían delante del humano, y entonces no se cree ninguno.
+
+# Auto-actualizar clones atrasados (desde el 9-oct-2026). Con "si", el arranque hace un
+# fast-forward (git merge --ff-only) de los clones del índice que estén LIMPIOS (sin
+# cambios en lo versionado) y vayan SOLO por detrás de su upstream. Nunca toca uno
+# sucio, divergido, con commits sin subir, con HEAD desprendido o sin upstream: de esos
+# solo avisa, y dice por qué. Lo que actualiza lo cuenta siempre en el arranque.
+# Probado en scripts/probar-autopull.sh. "no" = vuelve a solo avisar.
+BITACORA_AUTOPULL="si"
