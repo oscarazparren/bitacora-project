@@ -96,6 +96,13 @@ BITACORA_INDICE_REPOS=""
 # los repos saldrán como "sin datos". El índice necesita las dos mitades.
 BITACORA_ESTADO_REMOTO="/opt/bitacora/estado/estado.txt"
 
+# Usuario:grupo al que queda el fichero en el servidor (scripts/sembrar-estado.sh).
+# Es el usuario del servicio del receptor, ver bitacora-receptor.service. Tiene que
+# quedar suyo: sembrado de root, el receptor no podría reemplazarlo en el próximo push
+# y el índice se congelaría en la foto del día de la siembra — diciendo "sin cambios"
+# de repos que sí se mueven, que es el fallo silencioso de siempre con otra cara.
+BITACORA_ESTADO_DUENO="bitacora:bitacora"
+
 # ---------- Sincronización de webhooks (scripts/sincronizar-webhooks.sh) ----------
 # Rellena BITACORA_ESTADO_REMOTO leyendo los repos de la cuenta de GitHub y
 # cableando el webhook que los alimenta. Solo hace falta tocarlo si se monta el
