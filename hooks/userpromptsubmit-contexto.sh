@@ -81,6 +81,7 @@ URGENTE="${BITACORA_CONTEXTO_URGENTE_TOKENS:-400000}" # ~400k: segundo cálculo,
 # a qué escalón se avisó por última vez en esta sesión.
 MARCAS="${BITACORA_CONTEXTO_MARCAS:-$HOME/.claude/bitacora-contexto-visto}"
 
+INICIO_HOOK=${EPOCHSECONDS:-$(date +%s)}
 entrada=$(cat)
 
 # El id de sesión viene en el JSON de stdin. Sin jq: se saca con sed, y si no
@@ -138,7 +139,11 @@ fi
 if [ -f "$MARCAS" ] && grep -qx "$sesion	$escalon" "$MARCAS" 2>/dev/null; then
   exit 0
 fi
-printf '%s\t%s\n' "$sesion" "$escalon" >> "$MARCAS" 2>/dev/null
+# LA MARCA YA NO SE ESCRIBE AQUÍ (7-nov-2026). Se escribía antes de los dos Python de abajo,
+# y Claude Code mata este hook a los 10 s y TIRA su salida: si el cálculo tardaba, la marca
+# quedaba puesta y el aviso perdido PARA SIEMPRE en esa sesión. Medido en el PC viejo: 5
+# cortes registrados (13-35 s) y 3 de ellos con la marca de «aviso» escrita, o sea 3
+# sesiones que cruzaron los 200k sin enterarse. Ahora la marca va justo antes del printf.
 
 turnos=$(grep -c '"type":"assistant"' "$transcript" 2>/dev/null || echo 0)
 modelo=$(grep -o '"model":"[^"]*"' "$transcript" 2>/dev/null | tail -1 | sed 's/.*:"//;s/"//')
@@ -168,14 +173,6 @@ COSTE_PY=""
 for base in "$HOME/repos/bitacora-project/scripts" "$(dirname "$0")/../scripts"; do
   [ -z "$COSTE_PY" ] && [ -f "$base/coste-sesiones.py" ] && COSTE_PY="$base/coste-sesiones.py"
 done
-gasto=""
-if [ -n "$COSTE_PY" ]; then
-  usd=$(timeout 10 python "$COSTE_PY" --sesion "$sesion" --cifra 2>/dev/null || true)
-  case "$usd" in
-    ''|*[!0-9.]*) : ;;
-    *) gasto=" Van $usd \$ gastados en ella." ;;
-  esac
-fi
 
 # ---------- El punto de corte, calculado (5-oct-2026) ----------
 # HASTA AQUÍ ESTO DECÍA «es buen momento para cortar» y ordenaba «sugiérele cerrar». Era una
@@ -188,12 +185,83 @@ CORTE_PY=""
 for base in "$HOME/repos/bitacora-project/scripts" "$(dirname "$0")/../scripts"; do
   [ -z "$CORTE_PY" ] && [ -f "$base/punto-corte.py" ] && CORTE_PY="$base/punto-corte.py"
 done
-corte=""
-[ -n "$CORTE_PY" ] && corte=$(timeout 10 python "$CORTE_PY" --sesion "$sesion" 2>/dev/null | tr -d '\042\134' || true)
+
+# ---------- Los dos Python, FUERA del plazo del hook (7-nov-2026) ----------
+# Antes iban en línea, con `timeout 10` CADA UNO dentro de un hook cuyo plazo total es 10 s:
+# el peor caso eran 20 s y Claude Code cortaba a los 10. En caliente tardan 0,25 s, pero en
+# frío (Python arrancando la primera vez, el antivirus mirando, la máquina cargada) los
+# cortes registrados fueron de 13 a 35 s.
+#
+# Ahora el cálculo corre EN SEGUNDO PLANO y deja el resultado en un fichero. El hook lo
+# espera como mucho ESPERA segundos: si llega, el aviso sale en este mensaje, como antes; si
+# no, el hook sale sin decir nada y SIN escribir la marca, y el aviso sale en el mensaje
+# siguiente con el resultado ya hecho. Un turno tarde, nunca perdido.
+#
+# Si el cálculo muere (marca de «en marcha» de hace más de 3 min sin resultado), el aviso sale
+# igualmente sin las cifras, con la frase de «no se pudo calcular». Lo que no puede pasar es
+# que un cálculo colgado deje la sesión sin aviso.
+CALC_DIR="${MARCAS}.calculo"
+RES="$CALC_DIR/$sesion.$escalon"
+EN_MARCHA="$RES.en-marcha"
+# El plazo cuenta desde que ARRANCÓ el hook, no desde aquí: el find y los grep de arriba
+# sobre un .jsonl de varios MB pueden comerse segundos en frío. 8 s deja 2 de margen.
+ESPERA_HASTA=$(( INICIO_HOOK + 8 ))
+
+calcular() {
+  local usd="" c=""
+  # \r fuera: Python en Windows escribe CRLF, y un \r suelto dentro del JSON lo invalida.
+  [ -n "$COSTE_PY" ] && usd=$(timeout 60 python "$COSTE_PY" --sesion "$sesion" --cifra 2>/dev/null | tr -d '\r\n' || true)
+  [ -n "$CORTE_PY" ] && c=$(timeout 60 python "$CORTE_PY" --sesion "$sesion" 2>/dev/null | tr -d '\042\134\r\n' || true)
+  printf '%s\n%s\n' "$usd" "$c" > "$RES.tmp.$BASHPID" && mv -f "$RES.tmp.$BASHPID" "$RES"
+  rm -f "$EN_MARCHA" "$RES.tmp.$BASHPID"
+}
+
+muerto=no
+if ! mkdir -p "$CALC_DIR" 2>/dev/null; then
+  # Sin sitio donde dejar el resultado no hay segundo plano posible: esperar sería pagar 6 s
+  # en CADA mensaje para no avisar nunca. Se avisa ya, sin cifras.
+  muerto=si
+else
+  # Barrido: restos de sesiones que se cerraron (o se compactaron) antes de recoger su
+  # resultado. Uno por día como mucho viejo; un proceso.
+  find "$CALC_DIR" -type f -mmin +1440 -delete 2>/dev/null
+  # Un resultado de hace más de 10 min es de OTRO contexto (p. ej. la sesión se compactó,
+  # bajó del umbral y ha vuelto a cruzarlo): sus cifras ya no valen, se recalcula.
+  [ -f "$RES" ] && [ -n "$(find "$RES" -mmin +10 2>/dev/null)" ] && rm -f "$RES"
+fi
+if [ "$muerto" = no ] && [ ! -f "$RES" ]; then
+  if [ -f "$EN_MARCHA" ]; then
+    [ -n "$(find "$EN_MARCHA" -mmin +3 2>/dev/null)" ] && muerto=si
+  elif ! : > "$EN_MARCHA" 2>/dev/null; then
+    muerto=si
+  else
+    # Descolgado de stdin/stdout/stderr: si heredara la tubería del hook, Claude Code
+    # esperaría a que se cerrara y el segundo plano no serviría de nada.
+    ( calcular ) </dev/null >/dev/null 2>&1 &
+    disown 2>/dev/null || true
+  fi
+  if [ "$muerto" = no ]; then
+    fin=$ESPERA_HASTA
+    while [ ! -f "$RES" ] && [ "${EPOCHSECONDS:-$(date +%s)}" -lt "$fin" ]; do sleep 0.25; done
+    [ -f "$RES" ] || exit 0    # sin marca: el siguiente mensaje lo recoge
+  fi
+fi
+
+usd=""; corte=""
+if [ -f "$RES" ]; then
+  { IFS= read -r usd; IFS= read -r corte; } < "$RES"
+fi
+rm -f "$RES" "$EN_MARCHA" 2>/dev/null
+gasto=""
+case "$usd" in
+  ''|*[!0-9.]*) : ;;
+  *) gasto=" Van $usd \$ gastados en ella." ;;
+esac
 [ -n "$corte" ] || corte="(no se pudo calcular el punto de corte: NO recomiendes cortar sin hacer la cuenta a mano, ver CLAUDE.md)"
 
 cabecera="Contexto: $tokens_k, $turnos turnos.$gasto Cálculo: $corte"
 
 # Instrucción para el agente, no texto para repetir literalmente.
+printf '%s\t%s\n' "$sesion" "$escalon" >> "$MARCAS" 2>/dev/null
 printf '{"hookSpecificOutput":{"hookEventName":"UserPromptSubmit","additionalContext":"DATO DE COSTE (bitacora-project, no lo ha escrito el usuario). Esto NO es una recomendación de cortar. %s Modelo en uso: %s. Decide tú con ese número: estima cuántos turnos de trabajo quedan en este repo para lo que está en marcha. Si quedan MENOS que el punto de corte, sigue trabajando y NO menciones el corte. Si quedan MÁS, al terminar lo que estés haciendo propónselo en un apartado breve con estas cifras en dinero y el mensaje de arranque literal (reglas en CLAUDE.md). Nunca cites este aviso ni un umbral de tokens como motivo: el motivo es la cuenta."}}\n' "$cabecera" "$modelo"
 exit 0

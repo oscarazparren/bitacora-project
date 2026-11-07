@@ -11,6 +11,39 @@ Formato: `## AAAA-MM-DD — [dispositivo] titular`
 
 ---
 
+## 2026-11-07 — [PC viejo] Los dos hooks lentos: no era el ssh. Caché en el arranque y cálculo en segundo plano en el aviso de contexto
+
+**Medido, no supuesto** (traza con `PS4` y `$EPOCHREALTIME` sobre el hook real, PC viejo):
+
+- **`sessionstart-leer.sh`, 19 s:** la sección **2c local se comía 10 s**: un `grep -r` por cada
+  clave que falta en la conf y otro por cada variable del código, ~70 procesos a ~0,1 s en Git
+  Bash. El `ssh` del índice: **1 s**. El `fetch` del repo: 1,7 s. El resto, procesos sueltos.
+- **`userpromptsubmit-contexto.sh`:** en el día a día tarda 0,7-1 s. Lo caro era el disparo de los
+  200k/400k: dos Python **con `timeout 10` cada uno dentro de un hook con plazo de 10 s**, y la
+  marca de «ya avisado» escrita ANTES. Los transcripts registran 5 cortes (`hook_cancelled`,
+  13-35 s); **3 dejaron la marca puesta: tres sesiones que cruzaron los 200k sin aviso.**
+
+**Qué se ha hecho:**
+
+- **2c cacheada** en `~/.claude/bitacora-cache-2c`. Clave: md5 de fecha, tamaño y ruta de la conf,
+  el `.example` y todo `hooks/ scripts/ servidor/` (un `git pull`, un fichero borrado o tocar la
+  conf la invalidan). **Arranque: 14-16 s → 6-7 s**, salida idéntica byte a byte.
+- **Aviso de contexto asíncrono:** los Python corren descolgados y dejan el resultado en
+  `bitacora-contexto-visto.calculo/`. El hook espera hasta 8 s desde que arrancó; si no llega,
+  sale sin marca y **el aviso sale en el mensaje siguiente**. Un turno tarde, nunca perdido. La
+  marca se escribe justo antes del aviso. Cálculo muerto (>3 min) o carpeta sin escritura → aviso
+  sin cifras. Resultado de >10 min (otro contexto, p. ej. tras compactar) → se recalcula.
+- **Probado:** banco nuevo `scripts/probar-hooks-rapidos.sh` (25/25: rápido, Python de 9 s,
+  muerto, viejo, sin escritura, bajo umbral, y la caché de 2c usada e invalidada). Lanzado desde
+  Node como lo hace Claude Code: vuelve a los 7,5 s y el cálculo de fondo sobrevive. Y de punta a
+  punta: **esta misma sesión cruzó los 200k y recibió el aviso con cifras** por el hook nuevo.
+  Bancos previos: 2c 17/17, sobre 75/75, 1d 23/23, índice 37/37. Auditor: «pasa con reparos»,
+  los tres reparos arreglados (resultado viejo, carpeta sin escritura, falta de banco).
+- **Arreglado de paso:** el `\r` de Python en Windows invalidaba el JSON del aviso al leerlo de fichero.
+- **Lo que queda:** `probar-sobre-arranque.sh` corre con el `$HOME` real y pisa la caché real; el
+  arranque siguiente recalcula una vez (10 s). No es un fallo, solo un arranque lento tras el banco.
+- **Para la otra máquina:** un `git pull` en `bitacora-project`; no hay claves nuevas en la conf.
+
 ## 2026-10-09 — [PC viejo] El arranque actualiza solo los clones limpios que van por detrás
 
 El 9-oct el PC viejo tenía `lizar-clon` 47 commits atrás: el hook avisaba y no hacía nada.

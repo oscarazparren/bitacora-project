@@ -893,7 +893,28 @@ for c in "$HOME/repos/bitacora-project/bitacora.conf.example" \
   [ -f "$c" ] && { CONF_EXAMPLE="$c"; break; }
 done
 
+# CACHÉ DE LA PARTE LOCAL (7-nov-2026). Medido con traza en el PC viejo: de 19 s de arranque,
+# 10 se iban AQUÍ -- un grep -r por cada clave que falta en la conf y otro grep por cada
+# variable del código, ~70 procesos a ~0,1 s cada uno en Git Bash. El ssh del índice costaba
+# 1 s. Y el resultado solo depende de ficheros: la conf, el .example y el código de hooks/,
+# scripts/ y servidor/. Así que se calcula una vez y se reutiliza mientras ninguno cambie.
+# La clave es la lista entera (fecha, tamaño y ruta) de esos ficheros: un git pull, una
+# edición de la conf o un fichero borrado la cambian y obligan a recalcular. Cuesta 2
+# procesos (find y md5sum) en vez de ~70.
+CACHE_2C="$HOME/.claude/bitacora-cache-2c"
+CLAVE_2C=""; HIT_2C=no
 if [ -f "$CONF" ] && [ -n "$CONF_EXAMPLE" ]; then
+  B2C="${CONF_EXAMPLE%/*}"
+  CLAVE_2C=$(find "$CONF" "$CONF_EXAMPLE" "$B2C/hooks" "$B2C/scripts" "$B2C/servidor" -type f -printf '%T@ %s %p\n' 2>/dev/null | md5sum 2>/dev/null)
+  CLAVE_2C="${CLAVE_2C%% *}"
+  if [ -n "$CLAVE_2C" ] && [ -f "$CACHE_2C" ]; then
+    C2C=""; IFS= read -r -d '' C2C < "$CACHE_2C" || true
+    if [ "${C2C%%$'\n'*}" = "$CLAVE_2C" ]; then SALIDA="${SALIDA}${C2C#*$'\n'}"; HIT_2C=si; fi
+  fi
+fi
+ANTES_2C=${#SALIDA}
+
+if [ -f "$CONF" ] && [ -n "$CONF_EXAMPLE" ] && [ "$HIT_2C" = no ]; then
   BASE_DIR="$(dirname "$CONF_EXAMPLE")"
   vars_de() { grep -oE '^[A-Z_]+=' "$1" 2>/dev/null | tr -d '=' | sort -u; }
   FALTAN_RAW=$(comm -13 <(vars_de "$CONF") <(vars_de "$CONF_EXAMPLE"))
@@ -1052,6 +1073,13 @@ if [ -f "$CONF" ] && [ -n "$CONF_EXAMPLE" ]; then
 
 "
   fi
+fi
+# Se guarda también cuando no hay nada que avisar (bloque vacío): "todo cuadra" es justo el
+# caso de casi todos los arranques, y el que más interesa no recalcular.
+if [ "$HIT_2C" = no ] && [ -n "$CLAVE_2C" ]; then
+  rm -f "$CACHE_2C".[0-9]* 2>/dev/null    # restos de un arranque matado entre printf y mv
+  { printf '%s\n%s' "$CLAVE_2C" "${SALIDA:$ANTES_2C}" > "$CACHE_2C.$$" && mv -f "$CACHE_2C.$$" "$CACHE_2C"; } 2>/dev/null \
+    || rm -f "$CACHE_2C.$$" 2>/dev/null
 fi
 
 # Foto de esta máquina al servidor, y lectura de la de las otras. Una sola llamada SSH.
