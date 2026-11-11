@@ -72,8 +72,8 @@ CONF="${BITACORA_CONF:-$HOME/.claude/bitacora.conf}"
 # ~150k, pero la curva es plana entre 60 y 160 turnos y 200k captura casi todo el
 # ahorro sin meterse en el tramo donde manda el suelo.
 #
-# El razonamiento completo, con el método, está en ~/.claude/CLAUDE.md, sección
-# "Cuándo sale a cuenta cortar la sesión", y en la BITACORA.md de
+# El razonamiento completo, con el método, está en bitacora-flota/config/CORTE-SESION.md
+# (las reglas, en ~/.claude/CLAUDE.md, sección "Cuándo cortar la sesión"), y en la BITACORA.md de
 # lizar-asistente-aula, entradas del 31-ago y del 1-sep-2026.
 AVISO="${BITACORA_CONTEXTO_AVISO_TOKENS:-200000}"     # ~200k: dispara el cálculo, no es una conclusión
 URGENTE="${BITACORA_CONTEXTO_URGENTE_TOKENS:-400000}" # ~400k: segundo cálculo, con el contexto ya mayor
